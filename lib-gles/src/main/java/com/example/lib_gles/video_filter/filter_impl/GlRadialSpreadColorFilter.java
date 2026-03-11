@@ -9,10 +9,10 @@ import com.example.lib_gles.video_filter.core.filter.GlFilter;
 import java.util.List;
 
 /**
- * Radial spread color effect:
- * - Starts from center and spreads to edges repeatedly.
+ * Center-out square spread color effect:
+ * - A persistent square gradient field (no animated boundary).
  * - Center stays the lightest area.
- * - Color cycles through a configurable color list.
+ * - Only color cycles through a configurable color list.
  */
 public class GlRadialSpreadColorFilter extends GlFilter {
 
@@ -20,6 +20,7 @@ public class GlRadialSpreadColorFilter extends GlFilter {
             + "precision mediump float;\n"
             + "varying highp vec2 textureCoordinate;\n"
             + "uniform lowp sampler2D sTexture;\n"
+            + "uniform vec2 uResolution;\n"
             + "uniform float uTime;\n"
             + "uniform float uCycleDuration;\n"
             + "uniform float uMaxIntensity;\n"
@@ -54,28 +55,33 @@ public class GlRadialSpreadColorFilter extends GlFilter {
             + "    vec2 uv = textureCoordinate;\n"
             + "    vec4 base = texture2D(sTexture, uv);\n"
             + "\n"
-            + "    vec2 p = uv - vec2(0.5, 0.5);\n"
-            + "    float dist = length(p);\n"
-            + "    float maxDist = 0.70710678;\n"
-            + "\n"
             + "    float phase = fract(uTime / max(0.001, uCycleDuration));\n"
-            + "    float radius = phase * maxDist;\n"
             + "\n"
-            + "    float spread = 1.0 - smoothstep(radius, radius + uSpreadSoftness, dist);\n"
-            + "    float centerCore = 1.0 - smoothstep(0.0, maxDist, dist);\n"
+            + "    // Square field with aspect correction, so shape remains visually square on any video ratio.\n"
+            + "    vec2 p = uv - vec2(0.5, 0.5);\n"
+            + "    float aspect = uResolution.x / max(uResolution.y, 1.0);\n"
+            + "    p.x *= aspect;\n"
+            + "    float distSquare = max(abs(p.x), abs(p.y));\n"
+            + "    float edgeDist = max(0.5 * aspect, 0.5);\n"
+            + "    float norm = clamp(distSquare / edgeDist, 0.0, 1.0);\n"
+            + "\n"
+            + "    // Keep the field always present and smooth without an obvious boundary ring.\n"
+            + "    float falloff = max(0.05, uSpreadSoftness);\n"
+            + "    float centerCore = 1.0 - smoothstep(0.0, 1.0, pow(norm, falloff));\n"
             + "    float centerBoost = centerCore * centerCore;\n"
-            + "    float mask = clamp(max(spread, centerBoost), 0.0, 1.0);\n"
+            + "    float mask = clamp(0.28 + 0.72 * centerBoost, 0.0, 1.0);\n"
             + "\n"
             + "    int count = uColorCount;\n"
             + "    if (count < 1) count = 1;\n"
             + "    if (count > 4) count = 4;\n"
             + "    vec3 tint = evalCycleColor(phase, count);\n"
             + "\n"
-            + "    float centerLight = 0.20 * centerBoost;\n"
+            + "    float centerLight = 0.22 * centerBoost;\n"
             + "    vec3 tinted = mix(base.rgb, tint + vec3(centerLight), uMaxIntensity * mask);\n"
             + "    gl_FragColor = vec4(tinted, base.a);\n"
             + "}\n";
 
+    private int resolutionHandle = -1;
     private int timeHandle = -1;
     private int cycleDurationHandle = -1;
     private int maxIntensityHandle = -1;
@@ -88,7 +94,7 @@ public class GlRadialSpreadColorFilter extends GlFilter {
 
     private float cycleDurationSec = 1.6f;
     private float maxIntensity = 0.55f;
-    private float spreadSoftness = 0.10f;
+    private float spreadSoftness = 0.75f;
 
     // Up to 4 RGB colors.
     private final float[][] colors = new float[][]{
@@ -106,6 +112,7 @@ public class GlRadialSpreadColorFilter extends GlFilter {
     @Override
     public void initProgramHandle() {
         super.initProgramHandle();
+        resolutionHandle = GLES20.glGetUniformLocation(mProgramHandle, "uResolution");
         timeHandle = GLES20.glGetUniformLocation(mProgramHandle, "uTime");
         cycleDurationHandle = GLES20.glGetUniformLocation(mProgramHandle, "uCycleDuration");
         maxIntensityHandle = GLES20.glGetUniformLocation(mProgramHandle, "uMaxIntensity");
@@ -123,10 +130,11 @@ public class GlRadialSpreadColorFilter extends GlFilter {
                 ? presentationTimeUs / 1_000_000_000f
                 : (SystemClock.uptimeMillis() / 1000f);
 
+        GLES20.glUniform2f(resolutionHandle, mWidth, mHeight);
         GLES20.glUniform1f(timeHandle, tSec);
         GLES20.glUniform1f(cycleDurationHandle, Math.max(0.1f, cycleDurationSec));
         GLES20.glUniform1f(maxIntensityHandle, clamp(maxIntensity, 0f, 1f));
-        GLES20.glUniform1f(spreadSoftnessHandle, clamp(spreadSoftness, 0.005f, 0.4f));
+        GLES20.glUniform1f(spreadSoftnessHandle, clamp(spreadSoftness, 0.05f, 2.5f));
         GLES20.glUniform1i(colorCountHandle, clampInt(colorCount, 1, 4));
 
         GLES20.glUniform3f(color0Handle, colors[0][0], colors[0][1], colors[0][2]);
@@ -146,7 +154,7 @@ public class GlRadialSpreadColorFilter extends GlFilter {
     }
 
     public GlRadialSpreadColorFilter setSpreadSoftness(float spreadSoftness) {
-        this.spreadSoftness = clamp(spreadSoftness, 0.005f, 0.4f);
+        this.spreadSoftness = clamp(spreadSoftness, 0.05f, 2.5f);
         return this;
     }
 
