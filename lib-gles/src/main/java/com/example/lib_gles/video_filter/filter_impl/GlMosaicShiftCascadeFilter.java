@@ -12,8 +12,10 @@ import java.util.Map;
  * Composite effect timeline:
  * 1) Keep mosaic = 40 for 1.0s.
  * 2) Instantly shift frame left by 30%, then return to original in 0.2s while mosaic 40 -> 20.
- * 3) Repeat once: shift/return in 0.2s while mosaic 20 -> 10.
- * 4) Repeat once: shift/return in 0.2s while mosaic 10 -> 0.
+ * 3) Wait stepIntervalMs.
+ * 4) Repeat once: shift/return in 0.2s while mosaic 20 -> 10.
+ * 5) Wait stepIntervalMs.
+ * 6) Repeat once: shift/return in 0.2s while mosaic 10 -> 0.
  * 5) After timeline ends, keep offset=0 and mosaic=0.
  */
 public class GlMosaicShiftCascadeFilter extends GlFilter {
@@ -43,6 +45,7 @@ public class GlMosaicShiftCascadeFilter extends GlFilter {
 
     private float holdMs = 1000f;
     private float stepMs = 200f;
+    private float stepIntervalMs = 0f;
     private float startMosaic = 40f;
     private float mid1Mosaic = 20f;
     private float mid2Mosaic = 10f;
@@ -91,10 +94,12 @@ public class GlMosaicShiftCascadeFilter extends GlFilter {
 
     private State computeState(float elapsedMs) {
         State out = new State();
-        float t0 = holdMs;
-        float t1 = t0 + stepMs;
-        float t2 = t1 + stepMs;
-        float t3 = t2 + stepMs;
+        float t0 = holdMs;                          // end of hold
+        float t1 = t0 + stepMs;                     // end of step1 (40 -> 20)
+        float t2 = t1 + stepIntervalMs;             // end of wait1
+        float t3 = t2 + stepMs;                     // end of step2 (20 -> 10)
+        float t4 = t3 + stepIntervalMs;             // end of wait2
+        float t5 = t4 + stepMs;                     // end of step3 (10 -> 0)
 
         if (elapsedMs < t0) {
             out.shift = 0f;
@@ -108,13 +113,23 @@ public class GlMosaicShiftCascadeFilter extends GlFilter {
             return out;
         }
         if (elapsedMs < t2) {
-            float p = (elapsedMs - t1) / stepMs;
-            out.shift = shiftX * (1f - p);
-            out.blockSize = lerp(mid1Mosaic, mid2Mosaic, p);
+            out.shift = 0f;
+            out.blockSize = mid1Mosaic;
             return out;
         }
         if (elapsedMs < t3) {
             float p = (elapsedMs - t2) / stepMs;
+            out.shift = shiftX * (1f - p);
+            out.blockSize = lerp(mid1Mosaic, mid2Mosaic, p);
+            return out;
+        }
+        if (elapsedMs < t4) {
+            out.shift = 0f;
+            out.blockSize = mid2Mosaic;
+            return out;
+        }
+        if (elapsedMs < t5) {
+            float p = (elapsedMs - t4) / stepMs;
             out.shift = shiftX * (1f - p);
             out.blockSize = lerp(mid2Mosaic, endMosaic, p);
             return out;
@@ -131,6 +146,11 @@ public class GlMosaicShiftCascadeFilter extends GlFilter {
 
     public GlMosaicShiftCascadeFilter setStepMs(float stepMs) {
         this.stepMs = Math.max(1f, stepMs);
+        return this;
+    }
+
+    public GlMosaicShiftCascadeFilter setStepIntervalMs(float stepIntervalMs) {
+        this.stepIntervalMs = Math.max(0f, stepIntervalMs);
         return this;
     }
 
