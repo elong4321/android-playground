@@ -1,12 +1,14 @@
 package com.example.lib_gles.video_filter.composer;
 
 import static android.media.MediaExtractor.SEEK_TO_PREVIOUS_SYNC;
+import static android.media.MediaExtractor.SEEK_TO_CLOSEST_SYNC;
 
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -22,10 +24,11 @@ class MixAudioComposer implements IAudioComposer {
     private static final int DEFAULT_SAMPLE_RATE = 44100;
     private static final int DEFAULT_CHANNEL_COUNT = 2;
 
-    private final MediaExtractor mainExtractor;
+    private final MediaExtractor mainExtractor = new MediaExtractor();
     private int mainTrackIndex;
     private final MediaExtractor extExtractor = new MediaExtractor();
     private final int extTrackIndex;
+    private final int audioBitrate;
     private MediaFormat encoderFormat;
     private final MuxRender muxer;
     private final long targetDurationUs;
@@ -61,6 +64,9 @@ class MixAudioComposer implements IAudioComposer {
     private long extLastSampleTimeUs;
     private long extPrevSampleTimeUs;
     private long cachedExtDurationUs = -1;
+    private long clipStartUs = -1L;
+    private long clipEndUs = -1L;
+    private long mainFirstQueuedPtsUs = Long.MIN_VALUE;
 
     private final Queue<PcmBuffer> mainQueue = new ArrayDeque<>();
     private final Queue<PcmBuffer> extQueue = new ArrayDeque<>();
@@ -71,35 +77,42 @@ class MixAudioComposer implements IAudioComposer {
     private final float mainVolume = 0.5f;
     private final float extVolume = 0.5f;
 
-    MixAudioComposer(MediaExtractor mainExtractor,
+    MixAudioComposer(FileDescriptor sourceFileDescriptor,
                      int mainTrackIndex,
                      String externalAudioPath,
                      MuxRender muxer,
                      long targetDurationUs,
                      long startTimeMs,
-                     long endTimeMs) throws IOException {
-        this.mainExtractor = mainExtractor;
+                     long endTimeMs,
+                     int audioBitrate) throws IOException {
         this.mainTrackIndex = mainTrackIndex;
         this.muxer = muxer;
         this.targetDurationUs = targetDurationUs;
         this.startTimeMs = startTimeMs;
         this.endTimeMs = endTimeMs;
+        this.audioBitrate = audioBitrate;
 
+        this.mainExtractor.setDataSource(sourceFileDescriptor);
         extExtractor.setDataSource(externalAudioPath);
         this.extTrackIndex = selectAudioTrack(extExtractor);
         if (this.extTrackIndex < 0) {
-            throw new IllegalArgumentException("No audio track found in external audio.");
+            throw new ComposerException(ErrorCode.NO_AUDIO_TRACK, "No audio track found in external audio.");
         }
         // encoder format will be built in setup based on main audio format
     }
 
     @Override
     public void setup() {
+        clipStartUs = startTimeMs * 1000L;
+        clipEndUs = endTimeMs * 1000L;
         mainTrackIndex = resolveMainAudioTrackIndex(mainExtractor, mainTrackIndex);
         if (mainTrackIndex < 0) {
-            throw new IllegalArgumentException("No audio track found in source media.");
+            throw new ComposerException(ErrorCode.NO_AUDIO_TRACK, "No audio track found in source media.");
         }
         mainExtractor.selectTrack(mainTrackIndex);
+        if (enableClip()) {
+            mainExtractor.seekTo(clipStartUs, SEEK_TO_CLOSEST_SYNC);
+        }
         extExtractor.selectTrack(extTrackIndex);
 
         final MediaFormat mainInputFormat = mainExtractor.getTrackFormat(mainTrackIndex);
@@ -108,13 +121,13 @@ class MixAudioComposer implements IAudioComposer {
 
         encoderFormat = MediaFormat.createAudioFormat("audio/mp4a-latm", sampleRate, channelCount);
         encoderFormat.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
-        encoderFormat.setInteger(MediaFormat.KEY_BIT_RATE, 128_000);
+        encoderFormat.setInteger(MediaFormat.KEY_BIT_RATE, audioBitrate);
         encoderFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16 * 1024);
 
         try {
             encoder = MediaCodec.createEncoderByType(encoderFormat.getString(MediaFormat.KEY_MIME));
         } catch (IOException e) {
-            throw new IllegalStateException(e);
+            throw new ComposerException(ErrorCode.CODEC_INIT, e);
         }
         encoder.configure(encoderFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
         encoder.start();
@@ -123,12 +136,12 @@ class MixAudioComposer implements IAudioComposer {
 
         String mainMime = mainInputFormat.getString(MediaFormat.KEY_MIME);
         if (mainMime == null || !mainMime.startsWith("audio/")) {
-            throw new IllegalArgumentException("Invalid main audio mime type.");
+            throw new ComposerException(ErrorCode.INVALID_AUDIO_MIME, "Invalid main audio mime type.");
         }
         try {
             mainDecoder = MediaCodec.createDecoderByType(mainMime);
         } catch (IOException e) {
-            throw new IllegalStateException(e);
+            throw new ComposerException(ErrorCode.CODEC_INIT, e);
         }
         mainDecoder.configure(mainInputFormat, null, null, 0);
         mainDecoder.start();
@@ -140,12 +153,12 @@ class MixAudioComposer implements IAudioComposer {
         extChannelCount = getFormatInt(extInputFormat, MediaFormat.KEY_CHANNEL_COUNT, channelCount);
         String extMime = extInputFormat.getString(MediaFormat.KEY_MIME);
         if (extMime == null || !extMime.startsWith("audio/")) {
-            throw new IllegalArgumentException("Invalid external audio mime type.");
+            throw new ComposerException(ErrorCode.INVALID_AUDIO_MIME, "Invalid external audio mime type.");
         }
         try {
             extDecoder = MediaCodec.createDecoderByType(extMime);
         } catch (IOException e) {
-            throw new IllegalStateException(e);
+            throw new ComposerException(ErrorCode.CODEC_INIT, e);
         }
         extDecoder.configure(extInputFormat, null, null, 0);
         extDecoder.start();
@@ -206,6 +219,7 @@ class MixAudioComposer implements IAudioComposer {
                 encoder.release();
                 encoder = null;
             }
+            mainExtractor.release();
             extExtractor.release();
         } catch (RuntimeException e) {
             // ignore
@@ -229,7 +243,7 @@ class MixAudioComposer implements IAudioComposer {
         ByteBuffer inputBuffer = mainDecoderBuffers.getInputBuffer(result);
         int sampleSize = mainExtractor.readSampleData(inputBuffer, 0);
         long sampleTime = mainExtractor.getSampleTime();
-        if (sampleTime > endTimeMs * 1000 && enableClip()) {
+        if (sampleTime > clipEndUs && enableClip()) {
             mainExtractor.unselectTrack(mainTrackIndex);
             mainExtractorEOS = true;
             mainDecoder.queueInputBuffer(result, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
@@ -292,6 +306,16 @@ class MixAudioComposer implements IAudioComposer {
             enqueuePcmBuffer(mainQueue, mainDecoderBuffers, result, mainDecoderBufferInfo, true, false);
             return DRAIN_STATE_CONSUMED;
         } else if (mainDecoderBufferInfo.size > 0) {
+            if (enableClip() && mainDecoderBufferInfo.presentationTimeUs < clipStartUs) {
+                mainDecoder.releaseOutputBuffer(result, false);
+                return DRAIN_STATE_CONSUMED;
+            }
+            if (enableClip()) {
+                if (mainFirstQueuedPtsUs == Long.MIN_VALUE) {
+                    mainFirstQueuedPtsUs = mainDecoderBufferInfo.presentationTimeUs;
+                }
+                mainDecoderBufferInfo.presentationTimeUs = Math.max(0L, mainDecoderBufferInfo.presentationTimeUs - mainFirstQueuedPtsUs);
+            }
             enqueuePcmBuffer(mainQueue, mainDecoderBuffers, result, mainDecoderBufferInfo, false, false);
         }
         return DRAIN_STATE_CONSUMED;
