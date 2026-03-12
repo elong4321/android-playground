@@ -19,11 +19,16 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class Mp4Composer {
 
     private final static String TAG = Mp4Composer.class.getSimpleName();
+    private static final int DEFAULT_AUDIO_BITRATE = 64_000;
+    private static final int MIN_VIDEO_BITRATE = 750_000;
+    private static final int MAX_VIDEO_BITRATE = 3_500_000;
+    private static final double DEFAULT_BITS_PER_PIXEL = 0.10;
 
     public enum AudioMode {
         ORIGINAL,
@@ -43,15 +48,20 @@ public class Mp4Composer {
     private Listener listener;
     private FillMode fillMode = FillMode.PRESERVE_ASPECT_FIT;
     private FillModeCustomItem fillModeCustomItem;
-    private int timeScale = 1;
+    private double timeScale = 1;
     private float resolutionScale = 1f;
     private long clipStartMs, clipEndMs;
     private boolean flipVertical = false;
     private boolean flipHorizontal = false;
     private String audioPath;
     private AudioMode audioMode = AudioMode.ORIGINAL;
+    private int audioBitrate = DEFAULT_AUDIO_BITRATE;
 
     private ExecutorService executorService;
+    private final Object stateLock = new Object();
+    private volatile boolean pauseRequested = false;
+    private volatile boolean cancelRequested = false;
+    private final AtomicBoolean terminalNotified = new AtomicBoolean(false);
 
 
     public Mp4Composer(@NonNull final String srcPath, @NonNull final String destPath) {
@@ -128,7 +138,7 @@ public class Mp4Composer {
         return this;
     }
 
-    public Mp4Composer timeScale(final int timeScale) {
+    public Mp4Composer timeScale(final double timeScale) {
         this.timeScale = timeScale;
         return this;
     }
@@ -143,6 +153,11 @@ public class Mp4Composer {
         return this;
     }
 
+    public Mp4Composer audioBitrate(int audioBitrate) {
+        this.audioBitrate = audioBitrate > 0 ? audioBitrate : DEFAULT_AUDIO_BITRATE;
+        return this;
+    }
+
     private ExecutorService getExecutorService() {
         if (executorService == null) {
             executorService = Executors.newSingleThreadExecutor();
@@ -152,92 +167,131 @@ public class Mp4Composer {
 
 
     public Mp4Composer start() {
+        synchronized (stateLock) {
+            pauseRequested = false;
+            cancelRequested = false;
+        }
+        terminalNotified.set(false);
         getExecutorService().execute(new Runnable() {
             @Override
             public void run() {
-                Mp4ComposerEngine engine = new Mp4ComposerEngine();
-
-                engine.setProgressCallback(new Mp4ComposerEngine.ProgressCallback() {
-                    @Override
-                    public void onProgress(final double progress) {
-                        if (listener != null) {
-                            listener.onProgress(progress);
+                try {
+                    Mp4ComposerEngine engine = new Mp4ComposerEngine();
+                    engine.setControl(new Mp4ComposerEngine.Control() {
+                        @Override
+                        public void awaitIfPaused() throws InterruptedException {
+                            synchronized (stateLock) {
+                                while (pauseRequested && !cancelRequested) {
+                                    stateLock.wait();
+                                }
+                            }
                         }
+
+                        @Override
+                        public boolean isCancelRequested() {
+                            return cancelRequested;
+                        }
+                    });
+
+                    engine.setProgressCallback(new Mp4ComposerEngine.ProgressCallback() {
+                        @Override
+                        public void onProgress(final double progress) {
+                            if (listener != null) {
+                                listener.onProgress(progress);
+                            }
+                        }
+                    });
+
+                    File outFile = new File(destPath);
+                    if (outFile.exists()) {
+                        outFile.delete();
                     }
-                });
 
-                File outFile = new File(destPath);
-                if (outFile.exists()) {
-                    outFile.delete();
-                }
-
-                final File srcFile = new File(srcPath);
-                final FileInputStream fileInputStream;
-                try {
-                    fileInputStream = new FileInputStream(srcFile);
-                } catch (FileNotFoundException e) {
-                    e.printStackTrace();
-                    if (listener != null) {
-                        listener.onFailed(e);
+                    final File srcFile = new File(srcPath);
+                    final FileInputStream fileInputStream;
+                    try {
+                        fileInputStream = new FileInputStream(srcFile);
+                    } catch (FileNotFoundException e) {
+                        e.printStackTrace();
+                        notifyFailed(listener, e);
+                        return;
                     }
-                    return;
-                }
 
-                try {
-                    engine.setDataSource(fileInputStream.getFD());
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    if (listener != null) {
-                        listener.onFailed(e);
+                    try {
+                        engine.setDataSource(fileInputStream.getFD());
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                        notifyFailed(listener, e);
+                        return;
                     }
-                    return;
-                }
 
-                final int videoRotate = getVideoRotation(srcPath);
-                final Resolution srcVideoResolution = getVideoResolution(srcPath, videoRotate);
+                    final int videoRotate = getVideoRotation(srcPath);
+                    final Resolution srcVideoResolution;
+                    try {
+                        srcVideoResolution = getVideoResolution(srcPath, videoRotate);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                        notifyFailed(listener, e);
+                        return;
+                    }
 
-                if (filter == null) {
-                    filter = new GlFilter();
-                }
+                    if (filter == null) {
+                        filter = new GlFilter();
+                    }
 
-                if (fillMode == null) {
-                    fillMode = FillMode.PRESERVE_ASPECT_FIT;
-                }
+                    if (fillMode == null) {
+                        fillMode = FillMode.PRESERVE_ASPECT_FIT;
+                    }
 
-                if (fillModeCustomItem != null) {
-                    fillMode = FillMode.CUSTOM;
-                }
+                    if (fillModeCustomItem != null) {
+                        fillMode = FillMode.CUSTOM;
+                    }
 
-                if (outputResolution == null) {
-                    if (fillMode == FillMode.CUSTOM) {
-                        outputResolution = srcVideoResolution;
+                    Rotation outputRotation = Rotation.fromInt(rotation.getRotation() + videoRotate);
+                    Resolution effectiveSourceResolution;
+                    if (outputRotation == Rotation.ROTATION_90 || outputRotation == Rotation.ROTATION_270) {
+                        effectiveSourceResolution = new Resolution(srcVideoResolution.height(), srcVideoResolution.width());
                     } else {
-                        Rotation rotate = Rotation.fromInt(rotation.getRotation() + videoRotate);
-                        if (rotate == Rotation.ROTATION_90 || rotate == Rotation.ROTATION_270) {
-                            outputResolution = new Resolution(srcVideoResolution.height(), srcVideoResolution.width());
-                        } else {
-                            outputResolution = srcVideoResolution;
-                        }
+                        effectiveSourceResolution = srcVideoResolution;
                     }
-                }
-                if (filter instanceof IResolutionFilter) {
-                    ((IResolutionFilter) filter).setResolution(outputResolution);
-                }
 
-                if (timeScale < 2) {
-                    timeScale = 1;
-                }
+                    if (outputResolution == null) {
+                        if (fillMode == FillMode.CUSTOM) {
+                            outputResolution = effectiveSourceResolution;
+                        } else {
+                            outputResolution = effectiveSourceResolution;
+                        }
+                    } else {
+                        outputResolution = new Resolution(
+                                Math.min(outputResolution.width(), effectiveSourceResolution.width()),
+                                Math.min(outputResolution.height(), effectiveSourceResolution.height())
+                        );
+                    }
+                    if (filter instanceof IResolutionFilter) {
+                        ((IResolutionFilter) filter).setResolution(outputResolution);
+                    }
 
-                Log.d(TAG, "filterList = " + filterList);
-                Log.d(TAG, "rotation = " + (rotation.getRotation() + videoRotate));
-                Log.d(TAG, "inputResolution width = " + srcVideoResolution.width() + " height = " + srcVideoResolution.height());
-                outputResolution = new Resolution((int) (outputResolution.width() * resolutionScale), (int) (outputResolution.height() * resolutionScale));
-                Log.d(TAG, "outputResolution width = " + outputResolution.width() + " height = " + outputResolution.height());
-                Log.d(TAG, "fillMode = " + fillMode);
+//                    if (timeScale < 2) {
+//                        timeScale = 1;
+//                    }
 
-                try {
+                    Log.d(TAG, "filterList = " + filterList);
+                    Log.d(TAG, "rotation = " + (rotation.getRotation() + videoRotate));
+                    Log.d(TAG, "inputResolution width = " + srcVideoResolution.width() + " height = " + srcVideoResolution.height());
+                    outputResolution = new Resolution((int) (outputResolution.width() * resolutionScale), (int) (outputResolution.height() * resolutionScale));
+                    Log.d(TAG, "outputResolution width = " + outputResolution.width() + " height = " + outputResolution.height());
+                    Log.d(TAG, "fillMode = " + fillMode);
+
                     if (bitrate < 0) {
-                        bitrate = calcBitRate(outputResolution.width(), outputResolution.height());
+                        int sourceBitrate = getSourceBitrate(srcPath);
+                        bitrate = calcBitRate(
+                                outputResolution.width(),
+                                outputResolution.height(),
+                                srcVideoResolution.width(),
+                                srcVideoResolution.height(),
+                                sourceBitrate,
+                                frameRate
+                        );
                     }
                     engine.compose(
                             destPath,
@@ -247,7 +301,7 @@ public class Mp4Composer {
                             bitrate,
                             frameRate,
                             mute,
-                            Rotation.fromInt(rotation.getRotation() + videoRotate),
+                            outputRotation,
                             srcVideoResolution,
                             fillMode,
                             fillModeCustomItem,
@@ -257,30 +311,68 @@ public class Mp4Composer {
                             clipStartMs,
                             clipEndMs,
                             audioPath,
-                            audioMode
+                            audioMode,
+                            audioBitrate
                     );
 
+                    if (cancelRequested) {
+                        if (listener != null && terminalNotified.compareAndSet(false, true)) {
+                            listener.onCanceled();
+                        }
+                    } else if (listener != null && terminalNotified.compareAndSet(false, true)) {
+                        listener.onCompleted();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    if (listener != null && terminalNotified.compareAndSet(false, true)) {
+                        listener.onCanceled();
+                    }
                 } catch (Exception e) {
                     e.printStackTrace();
-                    if (listener != null) {
-                        listener.onFailed(e);
+                    if (listener != null && !cancelRequested && terminalNotified.compareAndSet(false, true)) {
+                        listener.onFailed(e, ErrorCode.fromException(e));
+                    } else if (listener != null && cancelRequested && terminalNotified.compareAndSet(false, true)) {
+                        listener.onCanceled();
                     }
-                    executorService.shutdown();
-                    return;
+                } finally {
+                    if (executorService != null) {
+                        executorService.shutdown();
+                        executorService = null;
+                    }
                 }
-
-                if (listener != null) {
-                    listener.onCompleted();
-                }
-                executorService.shutdown();
             }
         });
 
         return this;
     }
 
+    public void pause() {
+        synchronized (stateLock) {
+            if (cancelRequested) return;
+            pauseRequested = true;
+        }
+    }
+
+    public void resume() {
+        synchronized (stateLock) {
+            pauseRequested = false;
+            stateLock.notifyAll();
+        }
+    }
+
+    public boolean isPaused() {
+        return pauseRequested;
+    }
+
     public void cancel() {
-        getExecutorService().shutdownNow();
+        synchronized (stateLock) {
+            cancelRequested = true;
+            pauseRequested = false;
+            stateLock.notifyAll();
+        }
+        if (executorService != null) {
+            executorService.shutdownNow();
+        }
     }
 
 
@@ -303,7 +395,13 @@ public class Mp4Composer {
         void onCanceled();
 
 
-        void onFailed(Exception exception);
+        void onFailed(Exception exception, int errorCode);
+    }
+
+    private void notifyFailed(Listener listener, Exception exception) {
+        if (listener != null && !cancelRequested && terminalNotified.compareAndSet(false, true)) {
+            listener.onFailed(exception, ErrorCode.fromException(exception));
+        }
     }
 
     private int getVideoRotation(String videoFilePath) {
@@ -319,13 +417,44 @@ public class Mp4Composer {
         return Integer.valueOf(orientation);
     }
 
-    private int calcBitRate(int width, int height) {
-        final int bitrate = (int) (0.25 * 30 * width * height);
+    private int calcBitRate(int width, int height, int srcWidth, int srcHeight, int sourceBitrate, int frameRate) {
+        int safeFrameRate = frameRate > 0 ? frameRate : 30;
+        int heuristicBitrate = (int) (DEFAULT_BITS_PER_PIXEL * safeFrameRate * width * height);
+        int bitrate = heuristicBitrate;
+
+        if (sourceBitrate > 0 && srcWidth > 0 && srcHeight > 0) {
+            double pixelRatio = (double) width * height / ((double) srcWidth * srcHeight);
+            double normalizedPixelRatio = Math.max(0.5d, Math.min(pixelRatio, 1.0d));
+            int sourceAdjustedBitrate = (int) (sourceBitrate * normalizedPixelRatio);
+            bitrate = Math.min(heuristicBitrate, sourceAdjustedBitrate);
+        }
+
+        bitrate = Math.max(MIN_VIDEO_BITRATE, Math.min(bitrate, MAX_VIDEO_BITRATE));
         Log.i(TAG, "bitrate=" + bitrate);
         return bitrate;
     }
 
-    private Resolution getVideoResolution(final String path, final int rotation) {
+    private int getSourceBitrate(String videoFilePath) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(videoFilePath);
+            String bitrateValue = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE);
+            if (bitrateValue == null) {
+                return -1;
+            }
+            return Integer.parseInt(bitrateValue);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to read source bitrate.", e);
+            return -1;
+        } finally {
+            try {
+                retriever.release();
+            } catch (RuntimeException ignore) {
+            }
+        }
+    }
+
+    private Resolution getVideoResolution(final String path, final int rotation) throws IOException {
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         retriever.setDataSource(path);
         int width = Integer.valueOf(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
