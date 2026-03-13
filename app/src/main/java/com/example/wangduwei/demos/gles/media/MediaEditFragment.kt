@@ -19,12 +19,15 @@ import com.example.lib_gles.video_filter.core.filter.GlFilterList
 import com.example.lib_gles.video_filter.core.filter.GlFilterPeriod
 import com.example.lib_gles.video_filter.core.filter.TimeScaleFilter
 import com.example.lib_gles.video_filter.filter_impl.GlDynamicMosaicFilter
+import com.example.lib_gles.video_filter.filter_impl.GlEdgeGradientFrameFilter
 import com.example.lib_gles.video_filter.filter_impl.GlMosaicShiftCascadeFilter
 import com.example.lib_gles.video_filter.filter_impl.GlPulseVerticalScaleFilter
 import com.example.lib_gles.video_filter.filter_impl.GlPulseZoomFilter
 import com.example.lib_gles.video_filter.filter_impl.GlRadialSpreadColorFilter
 import com.example.lib_gles.video_filter.filter_impl.GlSoulOutFilter
 import com.example.lib_gles.video_filter.filter_impl.GlWatermarkFilter
+import com.example.lib_gles.video_filter.filter_impl.MeteorFilter
+import com.example.lib_gles.video_filter.filter_impl.PrismaticFilter2
 import com.example.lib_processor.PageInfo
 import com.example.wangduwei.demos.R
 import com.example.wangduwei.demos.main.BaseSupportFragment
@@ -291,32 +294,73 @@ class MediaEditFragment: BaseSupportFragment() {
 
     private fun onClickEffect3(textView: TextView) {
 
-        val radialColorFilter = GlRadialSpreadColorFilter()
-            .setCycleDurationSec(1.6f)
-            .setMaxIntensity(0.55f)
-            .setSpreadSoftness(0.10f)
-            .setColorList(arrayListOf<Int>(
-                Color.RED,
-                Color.YELLOW,
-                Color.DKGRAY,
-                Color.LTGRAY,
-            ))
-
+//        val radialColorFilter = GlRadialSpreadColorFilter()
+//            .setCycleDurationSec(1.6f)
+//            .setMaxIntensity(0.88f)
+//            .setSpreadSoftness(0.10f)
+//            .setColorList(arrayListOf<Int>(
+//                Color.RED,
+//                Color.YELLOW,
+//                Color.DKGRAY,
+//                Color.LTGRAY,
+//            ))
 
         val zoomFilter = GlPulseZoomFilter(2f)
             .setZoomInDurationMs(500f)
             .setZoomOutDurationMs(500f)
 
-        val verticalScalefilter1 = GlPulseVerticalScaleFilter()
+        val verticalScaleFilter = GlPulseVerticalScaleFilter()
             .setTargetScaleY(0.7f)
             .setShrinkDurationMs(200f)
             .setExpandDurationMs(200f)
             .setIntervalMs(3000f)
 
+
+        val color: Int = 0xFF8A2BE2.toInt();
+
+        val edgeGradientFrameFilter = GlEdgeGradientFrameFilter()
+            .setColor(color)
+            .setWidthRatio(0.12f)
+            .setDarkness(0.35f)
+            .setLightness(0.25f)
+            .setOpacity(0.78f)
+            .setFeather(0.06f)
+            .setGlowWidth(0.05f)
+            .setGlowIntensity(0.55f)
+
+        val meteorFilter = MeteorFilter()
+            .setColor(color)
+            .setCornerColors(
+                0xFFFFC84D.toInt(), // top
+                0xFFFF4D8A.toInt(), // right
+                0xFF4DD2FF.toInt(), // bottom
+                0xFFB66BFF.toInt()  // left
+            )
+            .setOpacity(0.64f)
+            .setBrightness(1.2f)
+            .setHeadWidthPx(3f)
+            .setTailWidthPx(1f)
+//            .setHeadCapPx(26f)
+            .setHeadCapScale(0.8f)
+            .setBlurRadiusPx(50f)
+//            .setTailLengthPx(360f)
+            // 按周长比例（例如 18%）
+            .setTailLengthRatio(0.32f)
+            .setInnerSoftnessPx(8f)
+            .setColorBlendStart(0.20f)
+            .setColorBlendGamma(0.45f)
+            .setSpeedRps(0.1f)
+
+        meteorFilter.setOnCornerColorChangeListener{ cornerIndex, nextColorIndex, nextColor ->
+            edgeGradientFrameFilter.setColor(nextColor)
+        }
+
         val filterGroup = GlFilterGroup(
-            GlFilterPeriod(0,Long.MAX_VALUE, radialColorFilter),
+            // 先做画面几何变换，再叠加边缘层，避免 zoom 时边框被放大裁掉
             GlFilterPeriod(0,Long.MAX_VALUE, zoomFilter),
-            GlFilterPeriod(0,Long.MAX_VALUE, verticalScalefilter1),
+            GlFilterPeriod(0,Long.MAX_VALUE, verticalScaleFilter),
+            GlFilterPeriod(0,Long.MAX_VALUE, edgeGradientFrameFilter),
+            GlFilterPeriod(0,Long.MAX_VALUE, meteorFilter),
         )
 
         val outFile = File(requireContext().externalCacheDir, "特效三_${System.currentTimeMillis()}.mp4")
