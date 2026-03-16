@@ -1,5 +1,6 @@
 package com.example.lib_gles.video_filter.filter_impl;
 
+import android.graphics.Color;
 import android.opengl.GLES20;
 import android.os.SystemClock;
 
@@ -43,6 +44,21 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "         * (1.0 - smoothstep(start + len, start + len + soft, y));\n"
             + "}\n"
             + "\n"
+            + "float halfEllipseBand(float xFromEdge, float y, float start, float len, float stripW, float soft) {\n"
+            + "    // Ellipse center is on screen edge, so only half ellipse is visible in-frame.\n"
+            + "    // Make it slimmer: reduce horizontal radius while keeping vertical length.\n"
+            + "    float rx = max(stripW * 0.58, 1e-4);\n"
+            + "    float ry = max(len * 0.5, 1e-4);\n"
+            + "    float cx = 0.0;\n"
+            + "    float cy = start + ry;\n"
+            + "    float nx = (xFromEdge - cx) / rx;\n"
+            + "    float ny = (y - cy) / ry;\n"
+            + "    float n = nx * nx + ny * ny;\n"
+            + "    float edge = n - 1.0;\n"
+            + "    float softN = clamp(soft / max(min(rx, ry), 1e-4), 0.001, 1.2);\n"
+            + "    return 1.0 - smoothstep(0.0, softN, edge);\n"
+            + "}\n"
+            + "\n"
             + "void main() {\n"
             + "    vec2 uv = textureCoordinate;\n"
             + "    vec4 base = texture2D(sTexture, uv);\n"
@@ -57,21 +73,22 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "    float yStartRight = 1.0 - (1.0 + trainLen) * phase;\n"
             + "\n"
             + "    float xLeft = uv.x;\n"
-            + "    float leftXMask = smoothstep(0.0, uEdgeSoftness, xLeft)\n"
-            + "                    * (1.0 - smoothstep(uStripWidth - uEdgeSoftness, uStripWidth + uBlurRadius, xLeft));\n"
+            + "    // Keep edge-side intact (no fade at x=0), only blur/fade toward inner side.\n"
+            + "    float leftXMask = 1.0 - smoothstep(uStripWidth - uEdgeSoftness, uStripWidth + uBlurRadius, xLeft);\n"
             + "    float leftYMask = smoothstep(yStartLeft - uBandSoftness, yStartLeft, uv.y)\n"
             + "                    * (1.0 - smoothstep(yStartLeft + trainLen, yStartLeft + trainLen + uBandSoftness, uv.y));\n"
             + "    float yLocalLeft = uv.y - yStartLeft;\n"
+            + "    float xLocalLeft = xLeft;\n"
             + "    float leftAlphaSeg = 0.0;\n"
             + "    vec3 leftColor = vec3(0.0);\n"
             + "    float b0s = 0.0;\n"
             + "    float b1s = slot;\n"
             + "    float b2s = slot * 2.0;\n"
             + "    float b3s = slot * 3.0;\n"
-            + "    float a0 = softBand(yLocalLeft, b0s, barLen, uBandSoftness);\n"
-            + "    float a1 = softBand(yLocalLeft, b1s, barLen, uBandSoftness);\n"
-            + "    float a2 = softBand(yLocalLeft, b2s, barLen, uBandSoftness);\n"
-            + "    float a3 = softBand(yLocalLeft, b3s, barLen, uBandSoftness);\n"
+            + "    float a0 = halfEllipseBand(xLocalLeft, yLocalLeft, b0s, barLen, uStripWidth, uBandSoftness);\n"
+            + "    float a1 = halfEllipseBand(xLocalLeft, yLocalLeft, b1s, barLen, uStripWidth, uBandSoftness);\n"
+            + "    float a2 = halfEllipseBand(xLocalLeft, yLocalLeft, b2s, barLen, uStripWidth, uBandSoftness);\n"
+            + "    float a3 = halfEllipseBand(xLocalLeft, yLocalLeft, b3s, barLen, uStripWidth, uBandSoftness);\n"
             + "    leftAlphaSeg = max(max(a0, a1), max(a2, a3));\n"
             + "    if (a0 >= a1 && a0 >= a2 && a0 >= a3) leftColor = pickColor(0);\n"
             + "    else if (a1 >= a0 && a1 >= a2 && a1 >= a3) leftColor = pickColor(1);\n"
@@ -80,17 +97,18 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "    float leftAlpha = leftXMask * leftYMask * leftAlphaSeg * uOpacity;\n"
             + "\n"
             + "    float xRight = 1.0 - uv.x;\n"
-            + "    float rightXMask = smoothstep(0.0, uEdgeSoftness, xRight)\n"
-            + "                     * (1.0 - smoothstep(uStripWidth - uEdgeSoftness, uStripWidth + uBlurRadius, xRight));\n"
+            + "    // Keep edge-side intact (no fade at x=1), only blur/fade toward inner side.\n"
+            + "    float rightXMask = 1.0 - smoothstep(uStripWidth - uEdgeSoftness, uStripWidth + uBlurRadius, xRight);\n"
             + "    float rightYMask = smoothstep(yStartRight - uBandSoftness, yStartRight, uv.y)\n"
             + "                     * (1.0 - smoothstep(yStartRight + trainLen, yStartRight + trainLen + uBandSoftness, uv.y));\n"
             + "    float yLocalRight = (yStartRight + trainLen) - uv.y;\n"
+            + "    float xLocalRight = xRight;\n"
             + "    float rightAlphaSeg = 0.0;\n"
             + "    vec3 rightColor = vec3(0.0);\n"
-            + "    float ra0 = softBand(yLocalRight, b0s, barLen, uBandSoftness);\n"
-            + "    float ra1 = softBand(yLocalRight, b1s, barLen, uBandSoftness);\n"
-            + "    float ra2 = softBand(yLocalRight, b2s, barLen, uBandSoftness);\n"
-            + "    float ra3 = softBand(yLocalRight, b3s, barLen, uBandSoftness);\n"
+            + "    float ra0 = halfEllipseBand(xLocalRight, yLocalRight, b0s, barLen, uStripWidth, uBandSoftness);\n"
+            + "    float ra1 = halfEllipseBand(xLocalRight, yLocalRight, b1s, barLen, uStripWidth, uBandSoftness);\n"
+            + "    float ra2 = halfEllipseBand(xLocalRight, yLocalRight, b2s, barLen, uStripWidth, uBandSoftness);\n"
+            + "    float ra3 = halfEllipseBand(xLocalRight, yLocalRight, b3s, barLen, uStripWidth, uBandSoftness);\n"
             + "    rightAlphaSeg = max(max(ra0, ra1), max(ra2, ra3));\n"
             + "    if (ra0 >= ra1 && ra0 >= ra2 && ra0 >= ra3) rightColor = pickColor(0);\n"
             + "    else if (ra1 >= ra0 && ra1 >= ra2 && ra1 >= ra3) rightColor = pickColor(1);\n"
@@ -251,6 +269,15 @@ public class GlDualSideMarqueeFilter extends GlFilter {
 
     public GlDualSideMarqueeFilter setOpacity(float opacity) {
         this.opacity = opacity;
+        return this;
+    }
+
+
+    public GlDualSideMarqueeFilter setColors(int color0, int color1, int color2, int color3) {
+        setColors(Color.red(color0) / 255f, Color.green(color0) / 255f, Color.blue(color0) / 255f,
+                Color.red(color1) / 255f, Color.green(color1) / 255f, Color.blue(color1) / 255f,
+                Color.red(color2) / 255f, Color.green(color2) / 255f, Color.blue(color2) / 255f,
+                Color.red(color3) / 255f, Color.green(color3) / 255f, Color.blue(color3) / 255f);
         return this;
     }
 
