@@ -18,6 +18,7 @@ import com.example.lib_gles.video_filter.core.filter.GlFilterGroup
 import com.example.lib_gles.video_filter.core.filter.GlFilterList
 import com.example.lib_gles.video_filter.core.filter.GlFilterPeriod
 import com.example.lib_gles.video_filter.core.filter.TimeScaleFilter
+import com.example.lib_gles.video_filter.filter_impl.GlDualSideMarqueeFilter
 import com.example.lib_gles.video_filter.filter_impl.GlDynamicMosaicFilter
 import com.example.lib_gles.video_filter.filter_impl.GlEdgeGradientFrameFilter
 import com.example.lib_gles.video_filter.filter_impl.GlMosaicShiftCascadeFilter
@@ -27,7 +28,10 @@ import com.example.lib_gles.video_filter.filter_impl.GlRadialSpreadColorFilter
 import com.example.lib_gles.video_filter.filter_impl.GlSoulOutFilter
 import com.example.lib_gles.video_filter.filter_impl.GlWatermarkFilter
 import com.example.lib_gles.video_filter.filter_impl.MeteorFilter
+import com.example.lib_gles.video_filter.filter_impl.MultiHeartPopFlashFilter
 import com.example.lib_gles.video_filter.filter_impl.PrismaticFilter2
+import com.example.lib_gles.video_filter.filter_impl.SnowFadeOutFilter
+import com.example.lib_gles.video_filter.filter_impl.SnowFilter
 import com.example.lib_processor.PageInfo
 import com.example.wangduwei.demos.R
 import com.example.wangduwei.demos.main.BaseSupportFragment
@@ -470,6 +474,21 @@ class MediaEditFragment: BaseSupportFragment() {
     }
 
     private fun onClickEffect4(textView: TextView) {
+        val snow = SnowFilter()
+            .setParticleCount(100)
+            .setSideBandWidthRatio(0.16f)
+            .setPointSize(10.5f)
+            .setSpeedRange(0.4f, 0.8f)
+            .setWind(0.02f);
+
+        val snowFadeOut = SnowFadeOutFilter()
+            .setParticleCount(40)
+            .setSpawnSpread(0.46f, 0.34f)
+            .setCenter(0.5f, 0.52f)
+            .setPointSize(10f)
+            .setSpeedRange(0.01f, 0.08f)
+            .setEdgeBlur(0.72f, 0.8f)
+
         val sideMarqueeFilter = GlDualSideMarqueeFilter(42f)
             .setEdgeSoftnessPx(20f)
             .setBlurRadiusPx(36f)   // 继续加大虚化
@@ -489,8 +508,17 @@ class MediaEditFragment: BaseSupportFragment() {
                 0.72f, 0.30f, 1.00f   // 色4
         )
 
+        val heartFilter = MultiHeartPopFlashFilter(context, "heart.png")
+            .setNormalShrinkDurationMs(1400f)
+            .setFlashShrinkDurationMs(350f)
+            .setMaxStaggerMs(500f)
+            .setRepeatIntervalMs(2000f)
+
         val filterGroup = GlFilterGroup(
+            GlFilterPeriod(0,Long.MAX_VALUE, snow),
+            GlFilterPeriod(0,Long.MAX_VALUE, snowFadeOut),
             GlFilterPeriod(0,Long.MAX_VALUE, sideMarqueeFilter),
+            GlFilterPeriod(0,Long.MAX_VALUE, heartFilter),
         )
 
         val outFile = File(requireContext().externalCacheDir, "特效测试_${System.currentTimeMillis()}.mp4")
