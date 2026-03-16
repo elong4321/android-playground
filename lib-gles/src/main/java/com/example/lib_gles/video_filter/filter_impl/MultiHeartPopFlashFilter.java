@@ -81,6 +81,15 @@ public class MultiHeartPopFlashFilter extends GlFilter {
     private float centerPadding = 0.08f;
 
     // 正常缩小阶段时长：心形从正常大小缩到最小大小的时间
+
+    // 渐显放大阶段时长：心形从初始大小放大到正常大小的时间
+    private float fadeInShrinkDurationMs = 300f;
+    // 渐显放大阶段的初始缩放比例
+    private float fadeInStartScale = 0.7f;
+    // 渐显放大阶段的初始透明度
+    private float fadeInStartAlpha = 0.2f;
+    // 渐显放大阶段的结束透明度
+    private float fadeInEndAlpha = 0.65f;
     private float normalShrinkDurationMs = 1100f;
     // 突然放大后缩小阶段时长：在“瞬间回到正常大小”后再缩小到0并淡出的时间
     private float flashShrinkDurationMs = 320f;
@@ -183,16 +192,29 @@ public class MultiHeartPopFlashFilter extends GlFilter {
             float minScale = normalScale * minScaleFactor;
 
             if (localElapsed >= 0f) {
-                float t0 = normalShrinkDurationMs;
-                float t1 = t0 + flashShrinkDurationMs;
+                // 阶段 1: 渐显放大阶段 (0 ~ fadeInShrinkDurationMs)
+                // 从 fadeInStartScale 放大到 normalScale，透明度从 fadeInStartAlpha 到 fadeInEndAlpha
+                float t0 = fadeInShrinkDurationMs;
+                // 阶段 2: 正常缩小阶段 (t0 ~ t0 + normalShrinkDurationMs)
+                float t1 = t0 + normalShrinkDurationMs;
+                // 阶段 3: 突然放大后缩小阶段 (t1 ~ t1 + flashShrinkDurationMs)
+                float t2 = t1 + flashShrinkDurationMs;
+                
                 if (localElapsed < t0) {
-                    float p = localElapsed / Math.max(1f, normalShrinkDurationMs);
-                    scale = lerp(normalScale, minScale, p);
-                    alpha = 1.0f;
+                    // 渐显放大阶段
+                    float p = localElapsed / Math.max(1f, fadeInShrinkDurationMs);
+                    scale = lerp(fadeInStartScale, normalScale, p);
+                    alpha = lerp(fadeInStartAlpha, fadeInEndAlpha, p);
                 } else if (localElapsed < t1) {
-                    float p = (localElapsed - t0) / Math.max(1f, flashShrinkDurationMs);
+                    // 正常缩小阶段
+                    float p = (localElapsed - t0) / Math.max(1f, normalShrinkDurationMs);
+                    scale = lerp(normalScale, minScale, p);
+                    alpha = fadeInEndAlpha;
+                } else if (localElapsed < t2) {
+                    // 突然放大后缩小阶段
+                    float p = (localElapsed - t1) / Math.max(1f, flashShrinkDurationMs);
                     scale = lerp(normalScale, 0f, p);
-                    alpha = 1.0f - p;
+                    alpha = fadeInEndAlpha * (1.0f - p);
                 }
             }
 
@@ -292,7 +314,7 @@ public class MultiHeartPopFlashFilter extends GlFilter {
                     centersY[idx] = lerp(minY, maxY, 0.5f + (random.nextFloat() - 0.5f) * 0.4f);
                 }
                 delayMs[idx] = random.nextFloat() * maxStaggerMs;
-                scaleMul[idx] = lerp(0.85f, 1.15f, random.nextFloat());
+                scaleMul[idx] = lerp(0.4f, 0.8f, random.nextFloat());
             }
         }
     }
@@ -369,6 +391,26 @@ public class MultiHeartPopFlashFilter extends GlFilter {
     public MultiHeartPopFlashFilter setCenterPadding(float padding) {
         this.centerPadding = clamp(padding, 0.02f, 0.24f);
         regenerateLayout();
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setFadeInShrinkDurationMs(float durationMs) {
+        this.fadeInShrinkDurationMs = Math.max(1f, durationMs);
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setFadeInStartScale(float scale) {
+        this.fadeInStartScale = Math.max(0.01f, scale);
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setFadeInStartAlpha(float alpha) {
+        this.fadeInStartAlpha = clamp(alpha, 0f, 1f);
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setFadeInEndAlpha(float alpha) {
+        this.fadeInEndAlpha = clamp(alpha, 0f, 1f);
         return this;
     }
 
