@@ -12,16 +12,17 @@ import com.example.lib_gles.video_filter.core.filter.GlFilter;
  * - Wait intervalMs, then repeat.
  */
 public class GlPulseVerticalScaleFilter extends GlFilter {
+    public interface OnPulseProgressListener {
+        void onShrinkProgress(long cycleIndex, float progress, float scaleY);
+        void onExpandProgress(long cycleIndex, float progress, float scaleY);
+    }
 
     private static final String VERTEX_SHADER = ""
             + "attribute vec4 aPosition;\n"
             + "attribute vec4 aTextureCoord;\n"
             + "varying highp vec2 vTextureCoord;\n"
-            + "uniform float uScaleY;\n"
             + "void main() {\n"
-            + "    vec4 pos = aPosition;\n"
-            + "    pos.y = pos.y * uScaleY;\n"
-            + "    gl_Position = pos;\n"
+            + "    gl_Position = aPosition;\n"
             + "    vTextureCoord = aTextureCoord.xy;\n"
             + "}\n";
 
@@ -29,8 +30,18 @@ public class GlPulseVerticalScaleFilter extends GlFilter {
             + "precision mediump float;\n"
             + "varying highp vec2 vTextureCoord;\n"
             + "uniform lowp sampler2D sTexture;\n"
+            + "uniform float uScaleY;\n"
+            + "float mirror01(float v) {\n"
+            + "    float t = mod(v, 2.0);\n"
+            + "    return (t <= 1.0) ? t : (2.0 - t);\n"
+            + "}\n"
             + "void main() {\n"
-            + "    gl_FragColor = texture2D(sTexture, vTextureCoord);\n"
+            + "    float sy = max(uScaleY, 0.0001);\n"
+            + "    // Center-anchored vertical shrink/expand remap.\n"
+            + "    float srcY = (vTextureCoord.y - 0.5) / sy + 0.5;\n"
+            + "    // Fill outside area by mirrored reflection of top/bottom content.\n"
+            + "    srcY = mirror01(srcY);\n"
+            + "    gl_FragColor = texture2D(sTexture, vec2(vTextureCoord.x, srcY));\n"
             + "}\n";
 
     private int scaleYHandle = -1;
@@ -40,6 +51,7 @@ public class GlPulseVerticalScaleFilter extends GlFilter {
     private float expandDurationMs = 200f;
     private float intervalMs = 1000f;
     private long firstPresentationMs = -1L;
+    private OnPulseProgressListener onPulseProgressListener;
 
     public GlPulseVerticalScaleFilter() {
         super(VERTEX_SHADER, FRAGMENT_SHADER);
@@ -69,6 +81,7 @@ public class GlPulseVerticalScaleFilter extends GlFilter {
         float elapsedMs = nowMs - firstPresentationMs;
         float effectMs = Math.max(1f, shrinkDurationMs + expandDurationMs);
         float cycleMs = Math.max(1f, effectMs + Math.max(0f, intervalMs));
+        long cycleIndex = (long) Math.floor(elapsedMs / cycleMs);
         float phaseMs = elapsedMs % cycleMs;
         if (phaseMs >= effectMs) {
             GLES20.glUniform1f(scaleYHandle, 1.0f);
@@ -79,9 +92,15 @@ public class GlPulseVerticalScaleFilter extends GlFilter {
         if (phaseMs < shrinkDurationMs) {
             float p = phaseMs / Math.max(1f, shrinkDurationMs); // 0..1
             scaleY = 1.0f + (targetScaleY - 1.0f) * p;
+            if (onPulseProgressListener != null) {
+                onPulseProgressListener.onShrinkProgress(cycleIndex, clamp(p, 0f, 1f), scaleY);
+            }
         } else {
             float p = (phaseMs - shrinkDurationMs) / Math.max(1f, expandDurationMs); // 0..1
             scaleY = targetScaleY + (1.0f - targetScaleY) * p;
+            if (onPulseProgressListener != null) {
+                onPulseProgressListener.onExpandProgress(cycleIndex, clamp(p, 0f, 1f), scaleY);
+            }
         }
         GLES20.glUniform1f(scaleYHandle, scaleY);
     }
@@ -103,6 +122,11 @@ public class GlPulseVerticalScaleFilter extends GlFilter {
 
     public GlPulseVerticalScaleFilter setIntervalMs(float intervalMs) {
         this.intervalMs = Math.max(0f, intervalMs);
+        return this;
+    }
+
+    public GlPulseVerticalScaleFilter setOnPulseProgressListener(OnPulseProgressListener listener) {
+        this.onPulseProgressListener = listener;
         return this;
     }
 

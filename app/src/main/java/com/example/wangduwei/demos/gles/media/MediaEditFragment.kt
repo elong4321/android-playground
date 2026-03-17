@@ -27,9 +27,12 @@ import com.example.lib_gles.video_filter.filter_impl.GlPulseZoomFilter
 import com.example.lib_gles.video_filter.filter_impl.GlRadialSpreadColorFilter
 import com.example.lib_gles.video_filter.filter_impl.GlSoulOutFilter
 import com.example.lib_gles.video_filter.filter_impl.GlWatermarkFilter
+import com.example.lib_gles.video_filter.filter_impl.LightFilter
 import com.example.lib_gles.video_filter.filter_impl.MeteorFilter
 import com.example.lib_gles.video_filter.filter_impl.MultiHeartPopFlashFilter
 import com.example.lib_gles.video_filter.filter_impl.PrismaticFilter2
+import com.example.lib_gles.video_filter.filter_impl.RadiumRaysFilter
+import com.example.lib_gles.video_filter.filter_impl.ScaleBlurFilter
 import com.example.lib_gles.video_filter.filter_impl.SnowFadeOutFilter
 import com.example.lib_gles.video_filter.filter_impl.SnowFilter
 import com.example.lib_processor.PageInfo
@@ -270,7 +273,7 @@ class MediaEditFragment: BaseSupportFragment() {
         videoEffect1.setOnClickListener { onClickEffect1Test(videoEffect1) }
         videoEffect3.setOnClickListener { onClickEffect3(videoEffect3) }
         videoEffect4.setOnClickListener { onClickEffect4(videoEffect4) }
-        videoEffectTest.setOnClickListener { testShake(videoEffectTest) }
+        videoEffectTest.setOnClickListener { testRay(videoEffectTest) }
     }
 
     /**
@@ -411,15 +414,78 @@ class MediaEditFragment: BaseSupportFragment() {
 //                Color.LTGRAY,
 //            ))
 
+        val lightFilter = LightFilter()
+            .setLight(1f)
+
         val zoomFilter = GlPulseZoomFilter(2f)
             .setZoomInDurationMs(500f)
             .setZoomOutDurationMs(500f)
+
+        val rayFilter = RadiumRaysFilter()
+            .setRayColor(0xFF34F0FF.toInt())
+            .setRayTopOffsets(-0.08f, -0.15f)
+            .setThickness(0.005f)
+            .setGlowWidth(0.026f)
+            .setGlowIntensity(1.2f)
+            .setOpacity(1f)
+            .setBrightness(1.25f)
+            .setPulseStrength(2f)
+            .setFlickerStrength(0f)
 
         val verticalScaleFilter = GlPulseVerticalScaleFilter()
             .setTargetScaleY(0.7f)
             .setShrinkDurationMs(200f)
             .setExpandDurationMs(200f)
             .setIntervalMs(3000f)
+            .setOnPulseProgressListener(object: GlPulseVerticalScaleFilter.OnPulseProgressListener {
+                private val baseLight = 1.0f
+                private val targetLight = 1.45f
+                // Shrink progress reaches this threshold, then begin boosting light.
+                private val shrinkLightStartProgress = 0.9f
+                private val topNearCenter1 = 0.15f
+                private val topNearCenter2 = 0.08f
+                private val topFar1 = -0.08f
+                private val topFar2 = -0.15f
+
+                override fun onExpandProgress(cycleIndex: Long, progress: Float, scaleY: Float) {
+                    // Expand: move rays away from center (back to top edge area).
+                    val t = progress.coerceIn(0f, 1f)
+                    val e = if (t < 0.5f) {
+                        2f * t * t
+                    } else {
+                        1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
+                    }
+                    val off1 = topNearCenter1 + (topFar1 - topNearCenter1) * e
+                    val off2 = topNearCenter2 + (topFar2 - topNearCenter2) * e
+                    rayFilter.setRayTopOffsets(off1, off2)
+
+                    // Expand phase: light returns from target to base.
+                    val light = targetLight + (baseLight - targetLight) * e
+                    lightFilter.setLight(light)
+                }
+
+                override fun onShrinkProgress(cycleIndex: Long, progress: Float, scaleY: Float) {
+                    // Shrink: move rays toward center.
+                    val t = progress.coerceIn(0f, 1f)
+                    val e = if (t < 0.5f) {
+                        2f * t * t
+                    } else {
+                        1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
+                    }
+                    val off1 = topFar1 + (topNearCenter1 - topFar1) * e
+                    val off2 = topFar2 + (topNearCenter2 - topFar2) * e
+                    rayFilter.setRayTopOffsets(off1, off2)
+
+                    // Shrink phase: after threshold, light ramps to target.
+                    val lt = if (t <= shrinkLightStartProgress) {
+                        0f
+                    } else {
+                        ((t - shrinkLightStartProgress) / (1f - shrinkLightStartProgress)).coerceIn(0f, 1f)
+                    }
+                    val light = baseLight + (targetLight - baseLight) * lt
+                    lightFilter.setLight(light)
+                }
+            })
 
 
         val color: Int = 0xFF8A2BE2.toInt();
@@ -451,22 +517,24 @@ class MediaEditFragment: BaseSupportFragment() {
             .setBlurRadiusPx(50f)
 //            .setTailLengthPx(360f)
             // 按周长比例（例如 18%）
-            .setTailLengthRatio(0.32f)
+            .setTailLengthRatio(1f)
             .setInnerSoftnessPx(8f)
             .setColorBlendStart(0.20f)
             .setColorBlendGamma(0.45f)
             .setSpeedRps(0.1f)
 
         meteorFilter.setOnCornerColorChangeListener{ cornerIndex, nextColorIndex, nextColor ->
-            edgeGradientFrameFilter.setColor(nextColor)
+            rayFilter.setRayColor(nextColor)
+
         }
 
         val filterGroup = GlFilterGroup(
+            GlFilterPeriod(0,Long.MAX_VALUE, lightFilter),
             // 先做画面几何变换，再叠加边缘层，避免 zoom 时边框被放大裁掉
             GlFilterPeriod(0,Long.MAX_VALUE, zoomFilter),
-            GlFilterPeriod(0,Long.MAX_VALUE, verticalScaleFilter),
-            GlFilterPeriod(0,Long.MAX_VALUE, edgeGradientFrameFilter),
+            GlFilterPeriod(0,Long.MAX_VALUE, rayFilter),
             GlFilterPeriod(0,Long.MAX_VALUE, meteorFilter),
+            GlFilterPeriod(0,Long.MAX_VALUE, verticalScaleFilter),
         )
 
         val outFile = File(requireContext().externalCacheDir, "特效三_${System.currentTimeMillis()}.mp4")
@@ -645,6 +713,69 @@ class MediaEditFragment: BaseSupportFragment() {
 
         val outFile = File(requireContext().externalCacheDir, "特效测试_${System.currentTimeMillis()}.mp4")
         compose(filterGroup, textView, outFile)
+    }
+
+    private fun testSnow(textView: TextView) {
+        val snow = SnowFilter()
+            .setParticleCount(100)
+            .setSideBandWidthRatio(0.16f)
+            .setPointSize(10.5f)
+            .setSpeedRange(0.4f, 0.8f)
+            .setWind(0.02f);
+
+//            .setSnowColor(1.0f, 1.0f, 1.0f)
+//            .setParticleCount(680)      // 画面密度
+//            .setPointSize(13.5f)        // 雪花基础大小
+//            .setSizeRange(0.65f, 1.45f) // 大小离散
+//            .setSpeedRange(2.2f, 5.2f)  // 下落速度
+//            .setLifeRange(2.4f, 4.8f)   // 生命周期
+//            .setWind(0.022f)            // 轻微横风
+//            .setOpacity(0.88f)
+//            .setIntensity(1.0f)
+
+        val outFile = File(requireContext().externalCacheDir, "雪花_${System.currentTimeMillis()}.mp4")
+        compose(snow, textView, outFile)
+    }
+
+    private fun testSnowScale(textView: TextView) {
+        val snow = SnowFadeOutFilter()
+            .setParticleCount(40)
+            .setSpawnSpread(0.46f, 0.34f)
+            .setCenter(0.5f, 0.52f)
+            .setPointSize(10f)
+            .setSpeedRange(0.01f, 0.08f)
+            .setEdgeBlur(0.72f, 0.8f)
+
+//            .setSnowColor(1.0f, 1.0f, 1.0f)
+//            .setParticleCount(680)      // 画面密度
+//            .setPointSize(13.5f)        // 雪花基础大小
+//            .setSizeRange(0.65f, 1.45f) // 大小离散
+//            .setSpeedRange(2.2f, 5.2f)  // 下落速度
+//            .setLifeRange(2.4f, 4.8f)   // 生命周期
+//            .setWind(0.022f)            // 轻微横风
+//            .setOpacity(0.88f)
+//            .setIntensity(1.0f)
+
+        val outFile = File(requireContext().externalCacheDir, "雪花_${System.currentTimeMillis()}.mp4")
+        compose(snow, textView, outFile)
+    }
+
+    private fun testRay(textView: TextView) {
+        val filter = RadiumRaysFilter()
+        .setRayColor(0xFF34F0FF.toInt())
+        .setRayTopOffsets(0.08f, 0.15f)
+        .setThickness(0.005f)
+        .setGlowWidth(0.026f)
+        .setGlowIntensity(1.2f)
+        .setOpacity(1f)
+        .setBrightness(1.25f)
+        .setPulseStrength(2f)
+        .setFlickerStrength(0f)
+
+
+
+        val outFile = File(requireContext().externalCacheDir, "ray_${System.currentTimeMillis()}.mp4")
+        compose(filter, textView, outFile)
     }
 
 
