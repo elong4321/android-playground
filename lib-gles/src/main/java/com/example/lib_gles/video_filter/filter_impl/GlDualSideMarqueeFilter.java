@@ -15,7 +15,7 @@ import com.example.lib_gles.video_filter.core.filter.GlFilter;
 public class GlDualSideMarqueeFilter extends GlFilter {
 
     private static final String FRAGMENT_SHADER = ""
-            + "precision mediump float;\n"
+            + "precision highp float;\n"
             + "varying vec2 textureCoordinate;\n"
             + "uniform sampler2D sTexture;\n"
             + "uniform float uTime;\n"
@@ -88,35 +88,18 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "    float trainLen = slot * 4.0;\n"
             + "    float moveRange = 1.0 + trainLen;\n"
             + "    \n"
-            + "    // Ping-pong: complete full forward pass, then full backward pass\n"
-            + "    float phase, yStartLeft, yStartRight, yLocalLeft, yLocalRight;\n"
+            + "    // Ping-pong with triangle wave to avoid branch-switch jump at turning points.\n"
+            + "    float phase;\n"
             + "    if (uPingPongMode) {\n"
-            + "        float cycle = uTime * uSpeed;\n"
-            + "        float period = 2.0;\n"
-            + "        float t = fract(cycle / period);\n"
-            + "        float passPhase = t * 2.0; // 0->2 over one cycle\n"
-            + "        if (passPhase < 1.0) {\n"
-            + "            // Forward: left bottom->top, right top->bottom\n"
-            + "            yStartLeft = -trainLen + moveRange * passPhase;\n"
-            + "            yStartRight = 1.0 - moveRange * passPhase;\n"
-            + "            yLocalLeft = uv.y - yStartLeft;\n"
-            + "            yLocalRight = (yStartRight + trainLen) - uv.y;\n"
-            + "        } else {\n"
-            + "            // Backward: left top->bottom, right bottom->top\n"
-            + "            float backT = passPhase - 1.0; // 0->1 in backward pass\n"
-            + "            yStartLeft = 1.0 - moveRange * backT;\n"
-            + "            yStartRight = -trainLen + moveRange * backT;\n"
-            + "            yLocalLeft = (yStartLeft + trainLen) - uv.y;\n"
-            + "            yLocalRight = uv.y - yStartRight;\n"
-            + "        }\n"
+            + "        float t = fract(uTime * uSpeed);\n"
+            + "        phase = 1.0 - abs(t * 2.0 - 1.0); // 0->1->0\n"
             + "    } else {\n"
-            + "        // Legacy mode: always forward\n"
             + "        phase = fract(uTime * uSpeed);\n"
-            + "        yStartLeft = -trainLen + moveRange * phase;\n"
-            + "        yStartRight = 1.0 - moveRange * phase;\n"
-            + "        yLocalLeft = uv.y - yStartLeft;\n"
-            + "        yLocalRight = (yStartRight + trainLen) - uv.y;\n"
             + "    }\n"
+            + "    float yStartLeft = -trainLen + moveRange * phase;\n"
+            + "    float yStartRight = 1.0 - moveRange * phase;\n"
+            + "    float yLocalLeft = uv.y - yStartLeft;\n"
+            + "    float yLocalRight = (yStartRight + trainLen) - uv.y;\n"
             + "    \n"
             + "    // Bar positions (color0 always leads)\n"
             + "    float b0s = 0.0;\n"
@@ -194,6 +177,10 @@ public class GlDualSideMarqueeFilter extends GlFilter {
     private float speed = 0.50f;
     private float opacity = 0.95f;
     private boolean pingPongMode = true;
+    private long lastPresentationTimeRaw = Long.MIN_VALUE;
+    private boolean presentationTimeUnitLocked = false;
+    private boolean presentationTimeInNs = false;
+    private float accumulatedTimelineSec = 0f;
 
     private float color0R = 1.00f;
     private float color0G = 0.20f;
@@ -239,8 +226,41 @@ public class GlDualSideMarqueeFilter extends GlFilter {
         if (mWidth <= 0 || mHeight <= 0) {
             return;
         }
-        // Keep time in a bounded range: avoids precision loss in shader, and still moves even if filter is recreated.
-        float timeSec = (SystemClock.uptimeMillis() % 600000L) / 1000f;
+        // Use frame-to-frame delta accumulation to avoid unit ambiguity (us/ns) causing flicker.
+        float timeSec;
+        if (presentationTimeUs > 0L) {
+            if (lastPresentationTimeRaw == Long.MIN_VALUE) {
+                lastPresentationTimeRaw = presentationTimeUs;
+                accumulatedTimelineSec = 0f;
+            } else {
+                long deltaRaw = presentationTimeUs - lastPresentationTimeRaw;
+                lastPresentationTimeRaw = presentationTimeUs;
+                if (deltaRaw < 0L || deltaRaw > 10_000_000_000L) {
+                    // Timeline reset/seek. Restart local clock to avoid visible jump.
+                    accumulatedTimelineSec = 0f;
+                    presentationTimeUnitLocked = false;
+                } else if (deltaRaw > 0L) {
+                    if (!presentationTimeUnitLocked) {
+                        // Typical frame delta: us ~= 16k..50k; ns ~= 16M..50M.
+                        presentationTimeInNs = deltaRaw > 2_000_000L;
+                        presentationTimeUnitLocked = true;
+                    }
+                    float divisor = presentationTimeInNs ? 1_000_000_000f : 1_000_000f;
+                    float deltaSec = deltaRaw / divisor;
+                    // Clamp extreme gaps to keep motion visually stable.
+                    deltaSec = clamp(deltaSec, 0f, 0.25f);
+                    accumulatedTimelineSec += deltaSec;
+                }
+            }
+            timeSec = accumulatedTimelineSec;
+        } else {
+            // Preview fallback when timestamp is unavailable.
+            timeSec = (SystemClock.uptimeMillis() % 600000L) / 1000f;
+            lastPresentationTimeRaw = Long.MIN_VALUE;
+            presentationTimeUnitLocked = false;
+            presentationTimeInNs = false;
+            accumulatedTimelineSec = 0f;
+        }
         float widthNorm = clamp(stripWidthPx / mWidth, 0.001f, 0.35f);
         float edgeSoftNorm = clamp(edgeSoftnessPx / mWidth, 0.0005f, widthNorm * 0.95f);
         float blurNorm = clamp(blurRadiusPx / mWidth, 0.0005f, 0.40f);
