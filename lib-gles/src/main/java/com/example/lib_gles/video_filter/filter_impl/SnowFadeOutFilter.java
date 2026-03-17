@@ -60,10 +60,13 @@ public class SnowFadeOutFilter extends GlFilter {
             + "}\n";
 
     private static final class Particle {
+        float startX;
+        float startY;
         float x;
         float y;
         float vx;
         float vy;
+        float accelStartDistance;
         float life;
         float elapsed;
         float maxLife;
@@ -117,6 +120,10 @@ public class SnowFadeOutFilter extends GlFilter {
     private float spawnSpreadY = 0.32f;
     private float edgeBlurStart = 0.72f;
     private float edgeBlurStrength = 0.7f;
+    // Speed multiplier target after particle passes half of its travel distance.
+    private float secondHalfAccelMax = 2.0f;
+    // Start accelerating when traveledDistance reaches this ratio of total path (0~1).
+    private float accelStartFraction = 0.5f;
 
     public SnowFadeOutFilter() {
         super();
@@ -176,8 +183,10 @@ public class SnowFadeOutFilter extends GlFilter {
         float sx = centerX + (random.nextFloat() - 0.5f) * spawnSpreadX;
         float sy = centerY + (random.nextFloat() - 0.5f) * spawnSpreadY;
 
-        p.x = clamp(sx, 0f, 1f);
-        p.y = clamp(sy, 0f, 1f);
+        p.startX = clamp(sx, 0f, 1f);
+        p.startY = clamp(sy, 0f, 1f);
+        p.x = p.startX;
+        p.y = p.startY;
 
         // Radial outward direction from center with slight random deviation.
         float dx = p.x - centerX;
@@ -190,6 +199,8 @@ public class SnowFadeOutFilter extends GlFilter {
         float speed = lerp(speedMin, speedMax, random.nextFloat());
         p.vx = (float) Math.cos(dir) * speed;
         p.vy = (float) Math.sin(dir) * speed;
+        float totalDistance = computeDistanceToExit(p.startX, p.startY, p.vx, p.vy);
+        p.accelStartDistance = Math.max(0.02f, totalDistance * clamp(accelStartFraction, 0f, 1f));
 
         p.life = 1.0f;
         p.elapsed = 0.0f;
@@ -197,6 +208,29 @@ public class SnowFadeOutFilter extends GlFilter {
         p.baseSize = lerp(sizeMin, sizeMax, random.nextFloat());
         p.growth = lerp(growthMin, growthMax, random.nextFloat());
         p.swirl = (random.nextFloat() - 0.5f) * 1.2f;
+    }
+
+    private float computeDistanceToExit(float x, float y, float vx, float vy) {
+        final float min = -0.20f;
+        final float max = 1.20f;
+        final float eps = 1e-5f;
+
+        float tx = Float.POSITIVE_INFINITY;
+        if (Math.abs(vx) > eps) {
+            tx = (vx > 0f ? (max - x) : (min - x)) / vx;
+        }
+        float ty = Float.POSITIVE_INFINITY;
+        if (Math.abs(vy) > eps) {
+            ty = (vy > 0f ? (max - y) : (min - y)) / vy;
+        }
+
+        float t = Math.min(tx, ty);
+        if (!Float.isFinite(t) || t <= 0f) {
+            return 0.2f;
+        }
+        float speed = (float) Math.sqrt(vx * vx + vy * vy);
+        float totalDistance = speed * t;
+        return Math.max(0.08f, totalDistance);
     }
 
     private void updateParticles(float dtSec, float timeSec) {
@@ -212,9 +246,17 @@ public class SnowFadeOutFilter extends GlFilter {
             float age = 1.0f - p.life;
             float swirlX = (float) Math.sin(timeSec * 1.8f + i * 0.31f) * 0.01f * p.swirl;
             float swirlY = (float) Math.cos(timeSec * 1.5f + i * 0.27f) * 0.01f * p.swirl;
+            float traveled = (float) Math.sqrt(
+                    (p.x - p.startX) * (p.x - p.startX) + (p.y - p.startY) * (p.y - p.startY));
+            float accelScale = 1.0f;
+            if (traveled > p.accelStartDistance) {
+                float accelProgress = (traveled - p.accelStartDistance) / Math.max(p.accelStartDistance, 1e-4f);
+                accelProgress = clamp(accelProgress, 0f, 1f);
+                accelScale = lerp(1.0f, Math.max(1.0f, secondHalfAccelMax), accelProgress);
+            }
 
-            p.x += (p.vx + swirlX) * speedScale * dtSec;
-            p.y += (p.vy + swirlY) * speedScale * dtSec;
+            p.x += (p.vx + swirlX) * speedScale * accelScale * dtSec;
+            p.y += (p.vy + swirlY) * speedScale * accelScale * dtSec;
 
             // Keep particle visible until it leaves the screen with margin, then respawn.
             if (p.x < -0.20f || p.x > 1.20f || p.y < -0.20f || p.y > 1.20f) {
@@ -413,6 +455,20 @@ public class SnowFadeOutFilter extends GlFilter {
     public SnowFadeOutFilter setEdgeBlur(float start, float strength) {
         this.edgeBlurStart = clamp(start, 0f, 0.99f);
         this.edgeBlurStrength = Math.max(0f, strength);
+        return this;
+    }
+
+    public SnowFadeOutFilter setSecondHalfAccelMax(float secondHalfAccelMax) {
+        this.secondHalfAccelMax = Math.max(1.0f, secondHalfAccelMax);
+        return this;
+    }
+
+    /**
+     * 粒子走到总路程的多少比例后开始加速：
+     * 0.25 = 走到 1/4 开始加速；0.5 = 走到一半开始加速。
+     */
+    public SnowFadeOutFilter setAccelStartFraction(float accelStartFraction) {
+        this.accelStartFraction = clamp(accelStartFraction, 0f, 1f);
         return this;
     }
 
