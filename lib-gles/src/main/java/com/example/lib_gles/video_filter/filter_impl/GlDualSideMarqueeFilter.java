@@ -27,6 +27,10 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "uniform float uBarGap;\n"
             + "uniform float uSpeed;\n"
             + "uniform float uOpacity;\n"
+            + "uniform float uGlowWidth;\n"
+            + "uniform float uGlowIntensity;\n"
+            + "uniform float uColorIntensity;\n"
+            + "uniform float uHardColorSwitch;\n"
             + "uniform bool uPingPongMode;\n"
             + "uniform vec3 uColor0;\n"
             + "uniform vec3 uColor1;\n"
@@ -40,6 +44,11 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "    return uColor3;\n"
             + "}\n"
             + "\n"
+            + "vec3 pickColorDir(int idx, float dirForward) {\n"
+            + "    // Keep color order invariant across ping-pong direction changes.\n"
+            + "    return pickColor(idx);\n"
+            + "}\n"
+            + "\n"
             + "float softBand(float y, float start, float len, float soft) {\n"
             + "    return smoothstep(start - soft, start, y)\n"
             + "         * (1.0 - smoothstep(start + len, start + len + soft, y));\n"
@@ -48,8 +57,8 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "float halfEllipseBand(float xFromEdge, float y, float start, float len, float stripW, float soft, float blur) {\n"
             + "    // Ellipse center is on screen edge, so only half ellipse is visible in-frame.\n"
             + "    // Make it slimmer: reduce horizontal radius while keeping vertical length.\n"
-            + "    float rx = max(stripW * 0.58, 1e-4);\n"
-            + "    float ry = max(len * 0.5, 1e-4);\n"
+            + "    float rx = max(stripW * 0.58, 0.010);\n"
+            + "    float ry = max(len * 0.5, 0.030);\n"
             + "    float cx = 0.0;\n"
             + "    float cy = start + ry;\n"
             + "    float nx = (xFromEdge - cx) / rx;\n"
@@ -58,7 +67,7 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "    // Gradient from center (0) to edge (1): fade out towards ellipse edge\n"
             + "    float gradient = 1.0 - smoothstep(0.5, 1.0, n);\n"
             + "    // Blur: create a larger extended ellipse for glow effect\n"
-            + "    float blurExtend = blur * 12.0; // Amplify blur for visible effect\n"
+            + "    float blurExtend = max(blur * 12.0, 0.010); // Amplify blur for visible effect\n"
             + "    float rxBlur = rx + blurExtend;\n"
             + "    float ryBlur = ry + blurExtend;\n"
             + "    float nxB = (xFromEdge - cx) / rxBlur;\n"
@@ -86,20 +95,39 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "    float gapLen = clamp(uBarGap, 0.0, 2.0);\n"
             + "    float slot = barLen + gapLen;\n"
             + "    float trainLen = slot * 4.0;\n"
-            + "    float moveRange = 1.0 + trainLen;\n"
+            + "    float startPad = max(uBandSoftness, 0.001) * 1.4;\n"
+            + "    float moveRange = 1.0 + trainLen + startPad * 2.0;\n"
             + "    \n"
             + "    // Ping-pong with triangle wave to avoid branch-switch jump at turning points.\n"
             + "    float phase;\n"
+            + "    float dirForward = 1.0;\n"
             + "    if (uPingPongMode) {\n"
             + "        float t = fract(uTime * uSpeed);\n"
+            + "        dirForward = 1.0 - step(0.5, t);\n"
             + "        phase = 1.0 - abs(t * 2.0 - 1.0); // 0->1->0\n"
             + "    } else {\n"
             + "        phase = fract(uTime * uSpeed);\n"
             + "    }\n"
-            + "    float yStartLeft = -trainLen + moveRange * phase;\n"
-            + "    float yStartRight = 1.0 - moveRange * phase;\n"
-            + "    float yLocalLeft = uv.y - yStartLeft;\n"
-            + "    float yLocalRight = (yStartRight + trainLen) - uv.y;\n"
+            + "    float yStartLeft = -trainLen - startPad + moveRange * phase;\n"
+            + "    float yStartRight = 1.0 + startPad - moveRange * phase;\n"
+            + "    // Keep color order stable across direction changes:\n"
+            + "    // color0 always sticks to the motion-leading edge.\n"
+            + "    float yLocalLeft;\n"
+            + "    float yLocalRight;\n"
+            + "    if (dirForward > 0.5) {\n"
+            + "        // Left side moves up, right side moves down.\n"
+            + "        yLocalLeft = (yStartLeft + trainLen) - uv.y;\n"
+            + "        yLocalRight = uv.y - yStartRight;\n"
+            + "    } else {\n"
+            + "        // Left side moves down, right side moves up.\n"
+            + "        yLocalLeft = uv.y - yStartLeft;\n"
+            + "        yLocalRight = (yStartRight + trainLen) - uv.y;\n"
+            + "    }\n"
+            + "    // Whole-train visibility gate to avoid first-frame flash when train is still outside.\n"
+            + "    float leftTrainMask = smoothstep(yStartLeft - uBandSoftness, yStartLeft, uv.y)\n"
+            + "                        * (1.0 - smoothstep(yStartLeft + trainLen, yStartLeft + trainLen + uBandSoftness, uv.y));\n"
+            + "    float rightTrainMask = smoothstep(yStartRight - uBandSoftness, yStartRight, uv.y)\n"
+            + "                         * (1.0 - smoothstep(yStartRight + trainLen, yStartRight + trainLen + uBandSoftness, uv.y));\n"
             + "    \n"
             + "    // Bar positions (color0 always leads)\n"
             + "    float b0s = 0.0;\n"
@@ -109,9 +137,9 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "\n"
             + "    float xLeft = uv.x;\n"
             + "    // Keep edge-side intact (no fade at x=0), only blur/fade toward inner side.\n"
-            + "    float leftXMask = 1.0 - smoothstep(uStripWidth - uEdgeSoftness, uStripWidth + uBlurRadius, xLeft);\n"
-            + "    float leftYMask = smoothstep(yStartLeft - uBandSoftness, yStartLeft, uv.y)\n"
-            + "                    * (1.0 - smoothstep(yStartLeft + trainLen, yStartLeft + trainLen + uBandSoftness, uv.y));\n"
+            + "    float leftCoreX = 1.0 - smoothstep(uStripWidth - uEdgeSoftness, uStripWidth + uBlurRadius * 0.55, xLeft);\n"
+            + "    float leftOuterX = 1.0 - smoothstep(uStripWidth + uBlurRadius * 0.25, uStripWidth + uBlurRadius + uGlowWidth, xLeft);\n"
+            + "    float leftGlowX = max(leftOuterX - leftCoreX, 0.0);\n"
             + "    float xLocalLeft = xLeft;\n"
             + "    float leftAlphaSeg = 0.0;\n"
             + "    vec3 leftColor = vec3(0.0);\n"
@@ -119,18 +147,35 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "    float a1 = halfEllipseBand(xLocalLeft, yLocalLeft, b1s, barLen, uStripWidth, uBandSoftness, uBlurRadius);\n"
             + "    float a2 = halfEllipseBand(xLocalLeft, yLocalLeft, b2s, barLen, uStripWidth, uBandSoftness, uBlurRadius);\n"
             + "    float a3 = halfEllipseBand(xLocalLeft, yLocalLeft, b3s, barLen, uStripWidth, uBandSoftness, uBlurRadius);\n"
-            + "    leftAlphaSeg = max(max(a0, a1), max(a2, a3));\n"
-            + "    if (a0 >= a1 && a0 >= a2 && a0 >= a3) leftColor = pickColor(0);\n"
-            + "    else if (a1 >= a0 && a1 >= a2 && a1 >= a3) leftColor = pickColor(1);\n"
-            + "    else if (a2 >= a0 && a2 >= a1 && a2 >= a3) leftColor = pickColor(2);\n"
-            + "    else leftColor = pickColor(3);\n"
-            + "    float leftAlpha = leftXMask * leftYMask * leftAlphaSeg * uOpacity;\n"
+            + "    float lr0 = softBand(yLocalLeft, b0s, barLen, uBandSoftness);\n"
+            + "    float lr1 = softBand(yLocalLeft, b1s, barLen, uBandSoftness);\n"
+            + "    float lr2 = softBand(yLocalLeft, b2s, barLen, uBandSoftness);\n"
+            + "    float lr3 = softBand(yLocalLeft, b3s, barLen, uBandSoftness);\n"
+            + "    float leftRectSeg = max(max(lr0, lr1), max(lr2, lr3));\n"
+            + "    float leftEllipseSeg = max(max(a0, a1), max(a2, a3));\n"
+            + "    // Keep half-ellipse as primary shape; rectangle only acts as weak visibility fallback.\n"
+            + "    leftAlphaSeg = max(leftEllipseSeg, leftRectSeg * 0.20);\n"
+            + "    float lw0 = max(a0, lr0 * 0.20);\n"
+            + "    float lw1 = max(a1, lr1 * 0.20);\n"
+            + "    float lw2 = max(a2, lr2 * 0.20);\n"
+            + "    float lw3 = max(a3, lr3 * 0.20);\n"
+            + "    if (uHardColorSwitch > 0.5) {\n"
+            + "        if (lw0 >= lw1 && lw0 >= lw2 && lw0 >= lw3) leftColor = pickColorDir(0, dirForward);\n"
+            + "        else if (lw1 >= lw0 && lw1 >= lw2 && lw1 >= lw3) leftColor = pickColorDir(1, dirForward);\n"
+            + "        else if (lw2 >= lw0 && lw2 >= lw1 && lw2 >= lw3) leftColor = pickColorDir(2, dirForward);\n"
+            + "        else leftColor = pickColorDir(3, dirForward);\n"
+            + "    } else {\n"
+            + "        float lws = max(lw0 + lw1 + lw2 + lw3, 1e-5);\n"
+            + "        leftColor = (pickColorDir(0, dirForward) * lw0 + pickColorDir(1, dirForward) * lw1 + pickColorDir(2, dirForward) * lw2 + pickColorDir(3, dirForward) * lw3) / lws;\n"
+            + "    }\n"
+            + "    float leftCoreMask = leftCoreX * leftAlphaSeg * leftTrainMask;\n"
+            + "    float leftGlowMask = leftGlowX * leftAlphaSeg * leftTrainMask;\n"
             + "\n"
             + "    float xRight = 1.0 - uv.x;\n"
             + "    // Keep edge-side intact (no fade at x=1), only blur/fade toward inner side.\n"
-            + "    float rightXMask = 1.0 - smoothstep(uStripWidth - uEdgeSoftness, uStripWidth + uBlurRadius, xRight);\n"
-            + "    float rightYMask = smoothstep(yStartRight - uBandSoftness, yStartRight, uv.y)\n"
-            + "                     * (1.0 - smoothstep(yStartRight + trainLen, yStartRight + trainLen + uBandSoftness, uv.y));\n"
+            + "    float rightCoreX = 1.0 - smoothstep(uStripWidth - uEdgeSoftness, uStripWidth + uBlurRadius * 0.55, xRight);\n"
+            + "    float rightOuterX = 1.0 - smoothstep(uStripWidth + uBlurRadius * 0.25, uStripWidth + uBlurRadius + uGlowWidth, xRight);\n"
+            + "    float rightGlowX = max(rightOuterX - rightCoreX, 0.0);\n"
             + "    float xLocalRight = xRight;\n"
             + "    float rightAlphaSeg = 0.0;\n"
             + "    vec3 rightColor = vec3(0.0);\n"
@@ -138,16 +183,45 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "    float ra1 = halfEllipseBand(xLocalRight, yLocalRight, b1s, barLen, uStripWidth, uBandSoftness, uBlurRadius);\n"
             + "    float ra2 = halfEllipseBand(xLocalRight, yLocalRight, b2s, barLen, uStripWidth, uBandSoftness, uBlurRadius);\n"
             + "    float ra3 = halfEllipseBand(xLocalRight, yLocalRight, b3s, barLen, uStripWidth, uBandSoftness, uBlurRadius);\n"
-            + "    rightAlphaSeg = max(max(ra0, ra1), max(ra2, ra3));\n"
-            + "    if (ra0 >= ra1 && ra0 >= ra2 && ra0 >= ra3) rightColor = pickColor(0);\n"
-            + "    else if (ra1 >= ra0 && ra1 >= ra2 && ra1 >= ra3) rightColor = pickColor(1);\n"
-            + "    else if (ra2 >= ra0 && ra2 >= ra1 && ra2 >= ra3) rightColor = pickColor(2);\n"
-            + "    else rightColor = pickColor(3);\n"
-            + "    float rightAlpha = rightXMask * rightYMask * rightAlphaSeg * uOpacity;\n"
+            + "    float rr0 = softBand(yLocalRight, b0s, barLen, uBandSoftness);\n"
+            + "    float rr1 = softBand(yLocalRight, b1s, barLen, uBandSoftness);\n"
+            + "    float rr2 = softBand(yLocalRight, b2s, barLen, uBandSoftness);\n"
+            + "    float rr3 = softBand(yLocalRight, b3s, barLen, uBandSoftness);\n"
+            + "    float rightRectSeg = max(max(rr0, rr1), max(rr2, rr3));\n"
+            + "    float rightEllipseSeg = max(max(ra0, ra1), max(ra2, ra3));\n"
+            + "    // Keep half-ellipse as primary shape; rectangle only acts as weak visibility fallback.\n"
+            + "    rightAlphaSeg = max(rightEllipseSeg, rightRectSeg * 0.20);\n"
+            + "    float rw0 = max(ra0, rr0 * 0.20);\n"
+            + "    float rw1 = max(ra1, rr1 * 0.20);\n"
+            + "    float rw2 = max(ra2, rr2 * 0.20);\n"
+            + "    float rw3 = max(ra3, rr3 * 0.20);\n"
+            + "    if (uHardColorSwitch > 0.5) {\n"
+            + "        if (rw0 >= rw1 && rw0 >= rw2 && rw0 >= rw3) rightColor = pickColorDir(0, dirForward);\n"
+            + "        else if (rw1 >= rw0 && rw1 >= rw2 && rw1 >= rw3) rightColor = pickColorDir(1, dirForward);\n"
+            + "        else if (rw2 >= rw0 && rw2 >= rw1 && rw2 >= rw3) rightColor = pickColorDir(2, dirForward);\n"
+            + "        else rightColor = pickColorDir(3, dirForward);\n"
+            + "    } else {\n"
+            + "        float rws = max(rw0 + rw1 + rw2 + rw3, 1e-5);\n"
+            + "        rightColor = (pickColorDir(0, dirForward) * rw0 + pickColorDir(1, dirForward) * rw1 + pickColorDir(2, dirForward) * rw2 + pickColorDir(3, dirForward) * rw3) / rws;\n"
+            + "    }\n"
+            + "    float rightCoreMask = rightCoreX * rightAlphaSeg * rightTrainMask;\n"
+            + "    float rightGlowMask = rightGlowX * rightAlphaSeg * rightTrainMask;\n"
             + "\n"
             + "    vec3 color = base.rgb;\n"
-            + "    color = mix(color, leftColor, leftAlpha);\n"
-            + "    color = mix(color, rightColor, rightAlpha);\n"
+            + "    float leftCoreAlpha = clamp(leftCoreMask * clamp(uOpacity, 0.0, 1.0), 0.0, 1.0);\n"
+            + "    float leftGlowAlpha = clamp(leftGlowMask * clamp(uGlowIntensity, 0.0, 2.0) * clamp(uOpacity, 0.0, 1.0), 0.0, 1.0);\n"
+            + "    vec3 leftTint = clamp(leftColor * uColorIntensity, 0.0, 1.0);\n"
+            + "    // Core: direct tint keeps color separation strong.\n"
+            + "    color = mix(color, leftTint, leftCoreAlpha * 0.96);\n"
+            + "    // Glow: additive tint so halo hue follows the same core color.\n"
+            + "    color += leftTint * (leftGlowAlpha * 0.42);\n"
+            + "\n"
+            + "    float rightCoreAlpha = clamp(rightCoreMask * clamp(uOpacity, 0.0, 1.0), 0.0, 1.0);\n"
+            + "    float rightGlowAlpha = clamp(rightGlowMask * clamp(uGlowIntensity, 0.0, 2.0) * clamp(uOpacity, 0.0, 1.0), 0.0, 1.0);\n"
+            + "    vec3 rightTint = clamp(rightColor * uColorIntensity, 0.0, 1.0);\n"
+            + "    color = mix(color, rightTint, rightCoreAlpha * 0.96);\n"
+            + "    color += rightTint * (rightGlowAlpha * 0.42);\n"
+            + "    color = clamp(color, 0.0, 1.0);\n"
             + "    gl_FragColor = vec4(color, base.a);\n"
             + "}\n";
 
@@ -160,6 +234,10 @@ public class GlDualSideMarqueeFilter extends GlFilter {
     private int barGapHandle = -1;
     private int speedHandle = -1;
     private int opacityHandle = -1;
+    private int glowWidthHandle = -1;
+    private int glowIntensityHandle = -1;
+    private int colorIntensityHandle = -1;
+    private int hardColorSwitchHandle = -1;
     private int pingPongModeHandle = -1;
     private int color0Handle = -1;
     private int color1Handle = -1;
@@ -176,6 +254,10 @@ public class GlDualSideMarqueeFilter extends GlFilter {
     private float bandSoftness = 0.06f;
     private float speed = 0.50f;
     private float opacity = 0.95f;
+    private float glowWidthPx = 22f;
+    private float glowIntensity = 1.10f;
+    private float colorIntensity = 1.35f;
+    private boolean hardColorSwitch = true;
     private boolean pingPongMode = true;
     private long lastPresentationTimeRaw = Long.MIN_VALUE;
     private boolean presentationTimeUnitLocked = false;
@@ -214,6 +296,10 @@ public class GlDualSideMarqueeFilter extends GlFilter {
         barGapHandle = GLES20.glGetUniformLocation(mProgramHandle, "uBarGap");
         speedHandle = GLES20.glGetUniformLocation(mProgramHandle, "uSpeed");
         opacityHandle = GLES20.glGetUniformLocation(mProgramHandle, "uOpacity");
+        glowWidthHandle = GLES20.glGetUniformLocation(mProgramHandle, "uGlowWidth");
+        glowIntensityHandle = GLES20.glGetUniformLocation(mProgramHandle, "uGlowIntensity");
+        colorIntensityHandle = GLES20.glGetUniformLocation(mProgramHandle, "uColorIntensity");
+        hardColorSwitchHandle = GLES20.glGetUniformLocation(mProgramHandle, "uHardColorSwitch");
         pingPongModeHandle = GLES20.glGetUniformLocation(mProgramHandle, "uPingPongMode");
         color0Handle = GLES20.glGetUniformLocation(mProgramHandle, "uColor0");
         color1Handle = GLES20.glGetUniformLocation(mProgramHandle, "uColor1");
@@ -264,6 +350,7 @@ public class GlDualSideMarqueeFilter extends GlFilter {
         float widthNorm = clamp(stripWidthPx / mWidth, 0.001f, 0.35f);
         float edgeSoftNorm = clamp(edgeSoftnessPx / mWidth, 0.0005f, widthNorm * 0.95f);
         float blurNorm = clamp(blurRadiusPx / mWidth, 0.0005f, 0.40f);
+        float glowWidthNorm = clamp(glowWidthPx / mWidth, 0.0005f, 0.40f);
 
         GLES20.glUniform1f(timeHandle, timeSec);
         GLES20.glUniform1f(stripWidthHandle, widthNorm);
@@ -274,6 +361,10 @@ public class GlDualSideMarqueeFilter extends GlFilter {
         GLES20.glUniform1f(bandSoftnessHandle, clamp(bandSoftness, 0.01f, 0.45f));
         GLES20.glUniform1f(speedHandle, Math.max(0.001f, speed));
         GLES20.glUniform1f(opacityHandle, clamp(opacity, 0.0f, 1.0f));
+        GLES20.glUniform1f(glowWidthHandle, glowWidthNorm);
+        GLES20.glUniform1f(glowIntensityHandle, clamp(glowIntensity, 0.0f, 2.0f));
+        GLES20.glUniform1f(colorIntensityHandle, clamp(colorIntensity, 0.5f, 3.0f));
+        GLES20.glUniform1f(hardColorSwitchHandle, hardColorSwitch ? 1.0f : 0.0f);
         GLES20.glUniform1i(pingPongModeHandle, pingPongMode ? 1 : 0);
         GLES20.glUniform3f(color0Handle, color0R, color0G, color0B);
         GLES20.glUniform3f(color1Handle, color1R, color1G, color1B);
@@ -339,6 +430,26 @@ public class GlDualSideMarqueeFilter extends GlFilter {
 
     public GlDualSideMarqueeFilter setOpacity(float opacity) {
         this.opacity = opacity;
+        return this;
+    }
+
+    public GlDualSideMarqueeFilter setGlowWidthPx(float glowWidthPx) {
+        this.glowWidthPx = Math.max(0f, glowWidthPx);
+        return this;
+    }
+
+    public GlDualSideMarqueeFilter setGlowIntensity(float glowIntensity) {
+        this.glowIntensity = Math.max(0f, glowIntensity);
+        return this;
+    }
+
+    public GlDualSideMarqueeFilter setColorIntensity(float colorIntensity) {
+        this.colorIntensity = colorIntensity;
+        return this;
+    }
+
+    public GlDualSideMarqueeFilter setHardColorSwitch(boolean hardColorSwitch) {
+        this.hardColorSwitch = hardColorSwitch;
         return this;
     }
 
