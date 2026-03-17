@@ -495,34 +495,60 @@ class MediaEditFragment: BaseSupportFragment() {
         val color2 = 0xFF0B78FF
         val color3 = 0xFF00C8FF
         val sideMarqueeFilter = GlDualSideMarqueeFilter(24f)
-            .setEdgeSoftnessPx(20f)
-            .setBlurRadiusPx(36f)   // 继续加大虚化
-//            .setTrainLength(1f)  // 4 色总长度
-            .setColorBlendSpan(1f)
-            .setBarLength(0.8f)
-            .setBarGap(0f)
-            .setBandSoftness(0f) // 头尾模糊
-//            .setBarEndPortion(0.28f)     // 首尾各 28% 做厚度过渡
-//            .setBarEndWidthScale(0.40f)  // 首尾厚度 = 中间 40%
-            .setSpeed(0.8f)
-            .setOpacity(0.95f)
+            .setStripWidthPx(36f)
+            .setBarLength(0.7f)
+            .setBarGap(0.2f)
+            .setBandSoftness(0.08f)
+            .setEdgeSoftnessPx(12f)
+            .setBlurRadiusPx(32f)
+            .setGlowWidthPx(48f)
+            .setGlowIntensity(1.5f)
+            .setOpacity(1.0f)
+            .setColorIntensity(1.8f)
+            .setGlowIntensity(1.0f)
+            .setSpeed(0.1f)
+
+//            .setStripWidthPx(24f)
+//            .setBlurRadiusPx(30f)
+//            .setEdgeSoftnessPx(10f)
+//            .setGlowWidthPx(40f)
+//            .setGlowIntensity(1.3f)
+//            .setOpacity(0.95f)
+
+//            .setGlowWidthPx(36f)
+//            .setGlowIntensity(1.35f)
+//            .setEdgeSoftnessPx(10f)
+//            .setBlurRadiusPx(24f)
+
+
+//            .setEdgeSoftnessPx(60f)
+//            .setBlurRadiusPx(36f)   // 继续加大虚化
+//            .setColorBlendSpan(1f)
+//            .setBarLength(0.8f)
+//            .setBarGap(0f)
+//            .setBandSoftness(0f) // 头尾模糊
+//            .setSpeed(0.1f)
+//            .setOpacity(0.95f)
             .setColors(
                 color0.toInt(),
                 color1.toInt(),
                 color2.toInt(),
                 color3.toInt(),
             )
-//            .setColors(
-//                1.00f, 0.22f, 0.35f,  // 色1
-//                1.00f, 0.75f, 0.20f,  // 色2
-//                0.20f, 0.85f, 1.00f,  // 色3
-//                0.72f, 0.30f, 1.00f   // 色4
-//        )
+
+        val edgeFilter = GlEdgePingPongFilter()
+    .setBarLengthRatio(0.8f)
+    .setSpeed(0.45f)
+    .setWidthRatio(0.085f)
+    .setGlowWidth(0.06f)
+    .setGlowIntensity(1.0f);
 
         val heartFilter = MultiHeartPopFlashFilter(context, "heart.png")
+            .setInitialScaleRange(0.2f, 0.4f)
+            .setMaxScaleMultiplier(1.2f)
             .setNormalShrinkDurationMs(1400f)
             .setFlashShrinkDurationMs(350f)
-            .setMaxStaggerMs(500f)
+            .setMaxStaggerMs(1200f)
             .setRepeatIntervalMs(2000f)
 
         val filterGroup = GlFilterGroup(
