@@ -27,6 +27,7 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "uniform float uBarGap;\n"
             + "uniform float uSpeed;\n"
             + "uniform float uOpacity;\n"
+            + "uniform bool uPingPongMode;\n"
             + "uniform vec3 uColor0;\n"
             + "uniform vec3 uColor1;\n"
             + "uniform vec3 uColor2;\n"
@@ -67,10 +68,37 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "    float gapLen = clamp(uBarGap, 0.0, 2.0);\n"
             + "    float slot = barLen + gapLen;\n"
             + "    float trainLen = slot * 4.0;\n"
-            + "    float phase = fract(uTime * uSpeed);\n"
-            + "    // One full round: whole color train moves from fully off-screen to fully off-screen.\n"
-            + "    float yStartLeft = -trainLen + (1.0 + trainLen) * phase;\n"
-            + "    float yStartRight = 1.0 - (1.0 + trainLen) * phase;\n"
+            + "    float moveRange = 1.0 + trainLen;\n"
+            + "    \n"
+            + "    // Ping-pong: complete full forward pass, then full backward pass\n"
+            + "    float phase, yStartLeft, yStartRight;\n"
+            + "    if (uPingPongMode) {\n"
+            + "        float cycle = uTime * uSpeed;\n"
+            + "        float period = 2.0;\n"
+            + "        float t = fract(cycle / period);\n"
+            + "        float passPhase = t * 2.0; // 0->2 over one cycle\n"
+            + "        if (passPhase < 1.0) {\n"
+            + "            // Forward: left bottom->top, right top->bottom\n"
+            + "            yStartLeft = -trainLen + moveRange * passPhase;\n"
+            + "            yStartRight = 1.0 - moveRange * passPhase;\n"
+            + "        } else {\n"
+            + "            // Backward: left top->bottom, right bottom->top\n"
+            + "            float backT = passPhase - 1.0; // 0->1 in backward pass\n"
+            + "            yStartLeft = 1.0 - moveRange * backT;\n"
+            + "            yStartRight = -trainLen + moveRange * backT;\n"
+            + "        }\n"
+            + "    } else {\n"
+            + "        // Legacy mode: always forward\n"
+            + "        phase = fract(uTime * uSpeed);\n"
+            + "        yStartLeft = -trainLen + moveRange * phase;\n"
+            + "        yStartRight = 1.0 - moveRange * phase;\n"
+            + "    }\n"
+            + "    \n"
+            + "    // Bar positions (color0 always leads)\n"
+            + "    float b0s = 0.0;\n"
+            + "    float b1s = slot;\n"
+            + "    float b2s = slot * 2.0;\n"
+            + "    float b3s = slot * 3.0;\n"
             + "\n"
             + "    float xLeft = uv.x;\n"
             + "    // Keep edge-side intact (no fade at x=0), only blur/fade toward inner side.\n"
@@ -81,10 +109,6 @@ public class GlDualSideMarqueeFilter extends GlFilter {
             + "    float xLocalLeft = xLeft;\n"
             + "    float leftAlphaSeg = 0.0;\n"
             + "    vec3 leftColor = vec3(0.0);\n"
-            + "    float b0s = 0.0;\n"
-            + "    float b1s = slot;\n"
-            + "    float b2s = slot * 2.0;\n"
-            + "    float b3s = slot * 3.0;\n"
             + "    float a0 = halfEllipseBand(xLocalLeft, yLocalLeft, b0s, barLen, uStripWidth, uBandSoftness);\n"
             + "    float a1 = halfEllipseBand(xLocalLeft, yLocalLeft, b1s, barLen, uStripWidth, uBandSoftness);\n"
             + "    float a2 = halfEllipseBand(xLocalLeft, yLocalLeft, b2s, barLen, uStripWidth, uBandSoftness);\n"
@@ -131,6 +155,7 @@ public class GlDualSideMarqueeFilter extends GlFilter {
     private int barGapHandle = -1;
     private int speedHandle = -1;
     private int opacityHandle = -1;
+    private int pingPongModeHandle = -1;
     private int color0Handle = -1;
     private int color1Handle = -1;
     private int color2Handle = -1;
@@ -146,6 +171,7 @@ public class GlDualSideMarqueeFilter extends GlFilter {
     private float bandSoftness = 0.06f;
     private float speed = 0.50f;
     private float opacity = 0.95f;
+    private boolean pingPongMode = true;
 
     private float color0R = 1.00f;
     private float color0G = 0.20f;
@@ -179,6 +205,7 @@ public class GlDualSideMarqueeFilter extends GlFilter {
         barGapHandle = GLES20.glGetUniformLocation(mProgramHandle, "uBarGap");
         speedHandle = GLES20.glGetUniformLocation(mProgramHandle, "uSpeed");
         opacityHandle = GLES20.glGetUniformLocation(mProgramHandle, "uOpacity");
+        pingPongModeHandle = GLES20.glGetUniformLocation(mProgramHandle, "uPingPongMode");
         color0Handle = GLES20.glGetUniformLocation(mProgramHandle, "uColor0");
         color1Handle = GLES20.glGetUniformLocation(mProgramHandle, "uColor1");
         color2Handle = GLES20.glGetUniformLocation(mProgramHandle, "uColor2");
@@ -205,6 +232,7 @@ public class GlDualSideMarqueeFilter extends GlFilter {
         GLES20.glUniform1f(bandSoftnessHandle, clamp(bandSoftness, 0.01f, 0.45f));
         GLES20.glUniform1f(speedHandle, Math.max(0.001f, speed));
         GLES20.glUniform1f(opacityHandle, clamp(opacity, 0.0f, 1.0f));
+        GLES20.glUniform1i(pingPongModeHandle, pingPongMode ? 1 : 0);
         GLES20.glUniform3f(color0Handle, color0R, color0G, color0B);
         GLES20.glUniform3f(color1Handle, color1R, color1G, color1B);
         GLES20.glUniform3f(color2Handle, color2R, color2G, color2B);
@@ -272,6 +300,10 @@ public class GlDualSideMarqueeFilter extends GlFilter {
         return this;
     }
 
+    public GlDualSideMarqueeFilter setPingPongMode(boolean pingPongMode) {
+        this.pingPongMode = pingPongMode;
+        return this;
+    }
 
     public GlDualSideMarqueeFilter setColors(int color0, int color1, int color2, int color3) {
         setColors(Color.red(color0) / 255f, Color.green(color0) / 255f, Color.blue(color0) / 255f,
