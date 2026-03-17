@@ -475,38 +475,49 @@ class MediaEditFragment: BaseSupportFragment() {
 
     private fun onClickEffect4(textView: TextView) {
         val snow = SnowFilter()
-            .setParticleCount(100)
+            .setParticleCount(30)
             .setSideBandWidthRatio(0.16f)
             .setPointSize(10.5f)
-            .setSpeedRange(0.4f, 0.8f)
+            .setSpeedRange(0.2f, 0.4f)
             .setWind(0.02f);
 
         val snowFadeOut = SnowFadeOutFilter()
-            .setParticleCount(40)
+            .setParticleCount(30)
             .setSpawnSpread(0.46f, 0.34f)
             .setCenter(0.5f, 0.52f)
             .setPointSize(10f)
-            .setSpeedRange(0.01f, 0.08f)
+            .setSpeedRange(0.005f, 0.02f)
             .setEdgeBlur(0.72f, 0.8f)
 
-        val sideMarqueeFilter = GlDualSideMarqueeFilter(42f)
+
+        val color0 = 0xFFCB2BF6
+        val color1 = 0xFF572CCD
+        val color2 = 0xFF0B78FF
+        val color3 = 0xFF00C8FF
+        val sideMarqueeFilter = GlDualSideMarqueeFilter(24f)
             .setEdgeSoftnessPx(20f)
             .setBlurRadiusPx(36f)   // 继续加大虚化
 //            .setTrainLength(1f)  // 4 色总长度
             .setColorBlendSpan(1f)
-            .setBarLength(0.3f)
-            .setBarGap(0.55f)
-            .setBandSoftness(0.22f) // 头尾模糊
+            .setBarLength(0.8f)
+            .setBarGap(0f)
+            .setBandSoftness(0f) // 头尾模糊
 //            .setBarEndPortion(0.28f)     // 首尾各 28% 做厚度过渡
 //            .setBarEndWidthScale(0.40f)  // 首尾厚度 = 中间 40%
             .setSpeed(0.8f)
             .setOpacity(0.95f)
             .setColors(
-                1.00f, 0.22f, 0.35f,  // 色1
-                1.00f, 0.75f, 0.20f,  // 色2
-                0.20f, 0.85f, 1.00f,  // 色3
-                0.72f, 0.30f, 1.00f   // 色4
-        )
+                color0.toInt(),
+                color1.toInt(),
+                color2.toInt(),
+                color3.toInt(),
+            )
+//            .setColors(
+//                1.00f, 0.22f, 0.35f,  // 色1
+//                1.00f, 0.75f, 0.20f,  // 色2
+//                0.20f, 0.85f, 1.00f,  // 色3
+//                0.72f, 0.30f, 1.00f   // 色4
+//        )
 
         val heartFilter = MultiHeartPopFlashFilter(context, "heart.png")
             .setNormalShrinkDurationMs(1400f)
