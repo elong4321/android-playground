@@ -80,26 +80,30 @@ public class MultiHeartPopFlashFilter extends GlFilter {
     private float minHeartSpacing = 0.10f;
     private float centerPadding = 0.08f;
 
-    // 正常缩小阶段时长：心形从正常大小缩到最小大小的时间
-
-    // 渐显放大阶段时长：心形从初始大小放大到正常大小的时间
+    // 阶段1时长：从初始尺寸放大到 maxSize
     private float fadeInShrinkDurationMs = 300f;
-    // 渐显放大阶段的初始缩放比例
-    private float fadeInStartScale = 0.7f;
     // 渐显放大阶段的初始透明度
     private float fadeInStartAlpha = 0.2f;
     // 渐显放大阶段的结束透明度
     private float fadeInEndAlpha = 0.65f;
+    // 阶段2时长：从 maxSize 缩到 maxSize*0.5
     private float normalShrinkDurationMs = 1100f;
-    // 突然放大后缩小阶段时长：在“瞬间回到正常大小”后再缩小到0并淡出的时间
+    // 阶段3时长：先快放大到 maxSize*0.8，再快缩回 maxSize*0.5 并消失
     private float flashShrinkDurationMs = 320f;
+    // 阶段3中“放大子阶段”所占比例
+    private float flashExpandPortion = 0.35f;
     // 多颗心形之间的最大错峰延迟时间（毫秒）
-    private float maxStaggerMs = 280f;
+    private float maxStaggerMs = 900f;
     // 单颗心形的循环周期：每隔多久重复一轮（含错峰后单独计算）
     private float repeatIntervalMs = 2200f;
 
-    private float normalScale = 0.62f;
-    private float minScaleFactor = 0.20f;
+    // 初始尺寸随机范围（每颗心）
+    private float initialScaleMin = 0.40f;
+    private float initialScaleMax = 0.80f;
+    // 阶段目标比例（相对每颗心的 maxSize）
+    private float maxScaleMultiplier = 1.43f;
+    private float minScaleFactor = 0.50f;
+    private float flashPeakFactor = 0.80f;
     private float maxDisplayWidthRatio = 0.22f;
     private float maxDisplayHeightRatio = 0.22f;
 
@@ -189,36 +193,43 @@ public class MultiHeartPopFlashFilter extends GlFilter {
             }
             float scale = 0f;
             float alpha = 0f;
-            float minScale = normalScale * minScaleFactor;
+            float initialScale = scaleMul[i];
+            float maxSize = initialScale * maxScaleMultiplier;
+            float minSize = maxSize * minScaleFactor;
+            float flashPeak = maxSize * flashPeakFactor;
 
             if (localElapsed >= 0f) {
-                // 阶段 1: 渐显放大阶段 (0 ~ fadeInShrinkDurationMs)
-                // 从 fadeInStartScale 放大到 normalScale，透明度从 fadeInStartAlpha 到 fadeInEndAlpha
+                // 阶段 1: 初始尺寸(随机0.4~0.8) -> maxSize(初始*1.43)
                 float t0 = fadeInShrinkDurationMs;
-                // 阶段 2: 正常缩小阶段 (t0 ~ t0 + normalShrinkDurationMs)
+                // 阶段 2: maxSize -> maxSize*0.5
                 float t1 = t0 + normalShrinkDurationMs;
-                // 阶段 3: 突然放大后缩小阶段 (t1 ~ t1 + flashShrinkDurationMs)
+                // 阶段 3: maxSize*0.5 -> maxSize*0.8 -> maxSize*0.5 并消失
                 float t2 = t1 + flashShrinkDurationMs;
                 
                 if (localElapsed < t0) {
-                    // 渐显放大阶段
                     float p = localElapsed / Math.max(1f, fadeInShrinkDurationMs);
-                    scale = lerp(fadeInStartScale, normalScale, p);
+                    scale = lerp(initialScale, maxSize, p);
                     alpha = lerp(fadeInStartAlpha, fadeInEndAlpha, p);
                 } else if (localElapsed < t1) {
-                    // 正常缩小阶段
                     float p = (localElapsed - t0) / Math.max(1f, normalShrinkDurationMs);
-                    scale = lerp(normalScale, minScale, p);
+                    scale = lerp(maxSize, minSize, p);
                     alpha = fadeInEndAlpha;
                 } else if (localElapsed < t2) {
-                    // 突然放大后缩小阶段
                     float p = (localElapsed - t1) / Math.max(1f, flashShrinkDurationMs);
-                    scale = lerp(normalScale, 0f, p);
-                    alpha = fadeInEndAlpha * (1.0f - p);
+                    float expandPortion = clamp(flashExpandPortion, 0.05f, 0.95f);
+                    if (p < expandPortion) {
+                        float up = p / expandPortion;
+                        scale = lerp(minSize, flashPeak, up);
+                        alpha = fadeInEndAlpha;
+                    } else {
+                        float down = (p - expandPortion) / Math.max(0.0001f, 1.0f - expandPortion);
+                        scale = lerp(flashPeak, minSize, down);
+                        alpha = lerp(fadeInEndAlpha, 0f, down);
+                    }
                 }
             }
 
-            float safeScale = Math.min(scale, scaleCap) * scaleMul[i];
+            float safeScale = Math.min(scale, scaleCap);
             safeScale = Math.max(0f, safeScale);
             float sizeX = (heartWidth * safeScale) / mWidth;
             float sizeY = (heartHeight * safeScale) / mHeight;
@@ -280,17 +291,21 @@ public class MultiHeartPopFlashFilter extends GlFilter {
     private float computeSafeScaleCap() {
         float widthAtScale1 = heartWidth / Math.max(1f, (float) mWidth);
         float heightAtScale1 = heartHeight / Math.max(1f, (float) mHeight);
-        float cap = normalScale;
+        float cap = Float.MAX_VALUE;
         if (widthAtScale1 > 0f) {
             cap = Math.min(cap, maxDisplayWidthRatio / widthAtScale1);
         }
         if (heightAtScale1 > 0f) {
             cap = Math.min(cap, maxDisplayHeightRatio / heightAtScale1);
         }
+        if (cap == Float.MAX_VALUE) {
+            cap = 10f;
+        }
         return Math.max(0f, cap);
     }
 
     private void regenerateLayout() {
+        int totalHearts = Math.min(MAX_HEARTS, Math.max(1, heartsPerQuadrant * 4));
         int idx = 0;
         for (int q = 0; q < 4; q++) {
             float minX = (q % 2 == 0) ? centerPadding : 0.5f + centerPadding;
@@ -313,8 +328,13 @@ public class MultiHeartPopFlashFilter extends GlFilter {
                     centersX[idx] = lerp(minX, maxX, 0.5f + (random.nextFloat() - 0.5f) * 0.4f);
                     centersY[idx] = lerp(minY, maxY, 0.5f + (random.nextFloat() - 0.5f) * 0.4f);
                 }
-                delayMs[idx] = random.nextFloat() * maxStaggerMs;
-                scaleMul[idx] = lerp(0.4f, 0.8f, random.nextFloat());
+                // Stratified + small jitter: hearts are spread across the whole stagger window
+                // so appearance time difference is more obvious than pure random clustering.
+                float baseT = (totalHearts <= 1) ? 0f : (idx / (float) (totalHearts - 1));
+                float jitter = (random.nextFloat() - 0.5f) * (1.0f / Math.max(1f, totalHearts));
+                float t = clamp(baseT + jitter, 0f, 1f);
+                delayMs[idx] = t * maxStaggerMs;
+                scaleMul[idx] = lerp(initialScaleMin, initialScaleMax, random.nextFloat());
             }
         }
     }
@@ -399,11 +419,6 @@ public class MultiHeartPopFlashFilter extends GlFilter {
         return this;
     }
 
-    public MultiHeartPopFlashFilter setFadeInStartScale(float scale) {
-        this.fadeInStartScale = Math.max(0.01f, scale);
-        return this;
-    }
-
     public MultiHeartPopFlashFilter setFadeInStartAlpha(float alpha) {
         this.fadeInStartAlpha = clamp(alpha, 0f, 1f);
         return this;
@@ -424,18 +439,43 @@ public class MultiHeartPopFlashFilter extends GlFilter {
         return this;
     }
 
+    public MultiHeartPopFlashFilter setFlashExpandPortion(float portion) {
+        this.flashExpandPortion = clamp(portion, 0.05f, 0.95f);
+        return this;
+    }
+
     // 兼容旧接口：映射到“正常缩小阶段”。
     public MultiHeartPopFlashFilter setShrinkDurationMs(float shrinkDurationMs) {
         return setNormalShrinkDurationMs(shrinkDurationMs);
     }
 
     public MultiHeartPopFlashFilter setNormalScale(float normalScale) {
-        this.normalScale = Math.max(0.01f, normalScale);
+        // 兼容旧接口：映射为阶段1的 maxScaleMultiplier（相对初始尺寸）。
+        this.maxScaleMultiplier = Math.max(0.01f, normalScale);
         return this;
     }
 
     public MultiHeartPopFlashFilter setMinScaleFactor(float minScaleFactor) {
         this.minScaleFactor = clamp(minScaleFactor, 0f, 1f);
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setInitialScaleRange(float min, float max) {
+        float clampedMin = Math.max(0.01f, min);
+        float clampedMax = Math.max(clampedMin, max);
+        this.initialScaleMin = clampedMin;
+        this.initialScaleMax = clampedMax;
+        regenerateLayout();
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setMaxScaleMultiplier(float multiplier) {
+        this.maxScaleMultiplier = Math.max(0.01f, multiplier);
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setFlashPeakFactor(float flashPeakFactor) {
+        this.flashPeakFactor = Math.max(0f, flashPeakFactor);
         return this;
     }
 
