@@ -7,7 +7,7 @@ import android.os.SystemClock;
 import com.example.lib_gles.video_filter.core.filter.GlFilter;
 
 /**
- * Draw two horizontal radium rays near the top area.
+ * Draw one top horizontal ray and one mirrored bottom ray.
  */
 public class RadiumRaysFilter extends GlFilter {
 
@@ -16,9 +16,7 @@ public class RadiumRaysFilter extends GlFilter {
             + "varying highp vec2 textureCoordinate;\n"
             + "uniform lowp sampler2D sTexture;\n"
             + "uniform vec3 uColor1;\n"
-            + "uniform vec3 uColor2;\n"
             + "uniform float uY1;\n"
-            + "uniform float uY2;\n"
             + "uniform float uThickness;\n"
             + "uniform float uFeather;\n"
             + "uniform float uGlowWidth;\n"
@@ -52,34 +50,24 @@ public class RadiumRaysFilter extends GlFilter {
             + "    float feather = max(0.0001, uFeather);\n"
             + "    float glowW = max(0.0, uGlowWidth);\n"
             + "\n"
-            + "    float c1 = lineCoreMask(uv.y, uY1, coreHalf, feather);\n"
-            + "    float c2 = lineCoreMask(uv.y, uY2, coreHalf, feather);\n"
-            + "    float g1 = lineGlowMask(uv.y, uY1, coreHalf, feather, glowW, clamp(uGlowIntensity, 0.0, 4.0));\n"
-            + "    float g2 = lineGlowMask(uv.y, uY2, coreHalf, feather, glowW, clamp(uGlowIntensity, 0.0, 4.0));\n"
-            + "    float by1 = 1.0 - uY1;\n"
-            + "    float by2 = 1.0 - uY2;\n"
-            + "    float c3 = lineCoreMask(uv.y, by1, coreHalf, feather);\n"
-            + "    float c4 = lineCoreMask(uv.y, by2, coreHalf, feather);\n"
-            + "    float g3 = lineGlowMask(uv.y, by1, coreHalf, feather, glowW, clamp(uGlowIntensity, 0.0, 4.0));\n"
-            + "    float g4 = lineGlowMask(uv.y, by2, coreHalf, feather, glowW, clamp(uGlowIntensity, 0.0, 4.0));\n"
+            + "    float cTop = lineCoreMask(uv.y, uY1, coreHalf, feather);\n"
+            + "    float gTop = lineGlowMask(uv.y, uY1, coreHalf, feather, glowW, clamp(uGlowIntensity, 0.0, 4.0));\n"
+            + "    float yBottom = 1.0 - uY1;\n"
+            + "    float cBottom = lineCoreMask(uv.y, yBottom, coreHalf, feather);\n"
+            + "    float gBottom = lineGlowMask(uv.y, yBottom, coreHalf, feather, glowW, clamp(uGlowIntensity, 0.0, 4.0));\n"
             + "\n"
             + "    float op = clamp(uOpacity, 0.0, 1.0);\n"
             + "    float whiteA = clamp(uCoreWhiteAlpha, 0.0, 1.0);\n"
-            + "    vec3 rayCoreCol1 = mix(uColor1, vec3(1.0), whiteA);\n"
-            + "    vec3 rayCoreCol2 = mix(uColor2, vec3(1.0), whiteA);\n"
+            + "    vec3 rayCoreCol = mix(uColor1, vec3(1.0), whiteA);\n"
             + "    float gain = clamp(uBrightness, 0.0, 8.0);\n"
-            + "    vec3 rays = rayCoreCol1 * (c1 * op) + uColor1 * (g1 * op)\n"
-            + "              + rayCoreCol2 * (c2 * op) + uColor2 * (g2 * op)\n"
-            + "              + rayCoreCol1 * (c3 * op) + uColor1 * (g3 * op)\n"
-            + "              + rayCoreCol2 * (c4 * op) + uColor2 * (g4 * op);\n"
+            + "    vec3 rays = rayCoreCol * (cTop * op) + uColor1 * (gTop * op)\n"
+            + "              + rayCoreCol * (cBottom * op) + uColor1 * (gBottom * op);\n"
             + "    vec3 outRgb = clamp(src.rgb + rays * gain, 0.0, 1.0);\n"
             + "    gl_FragColor = vec4(outRgb, src.a);\n"
             + "}\n";
 
     private int color1Handle = -1;
-    private int color2Handle = -1;
     private int y1Handle = -1;
-    private int y2Handle = -1;
     private int thicknessHandle = -1;
     private int featherHandle = -1;
     private int glowWidthHandle = -1;
@@ -100,7 +88,6 @@ public class RadiumRaysFilter extends GlFilter {
 
     // In UV space (0 bottom, 1 top).
     private float y1 = 0.92f;
-    private float y2 = 0.84f;
     private float thickness = 0.010f;
     private float feather = 0.004f;
     private float glowWidth = 0.026f;
@@ -119,9 +106,7 @@ public class RadiumRaysFilter extends GlFilter {
     public void initProgramHandle() {
         super.initProgramHandle();
         color1Handle = GLES20.glGetUniformLocation(mProgramHandle, "uColor1");
-        color2Handle = GLES20.glGetUniformLocation(mProgramHandle, "uColor2");
         y1Handle = GLES20.glGetUniformLocation(mProgramHandle, "uY1");
-        y2Handle = GLES20.glGetUniformLocation(mProgramHandle, "uY2");
         thicknessHandle = GLES20.glGetUniformLocation(mProgramHandle, "uThickness");
         featherHandle = GLES20.glGetUniformLocation(mProgramHandle, "uFeather");
         glowWidthHandle = GLES20.glGetUniformLocation(mProgramHandle, "uGlowWidth");
@@ -147,9 +132,7 @@ public class RadiumRaysFilter extends GlFilter {
         color2G = color1G;
         color2B = color1B;
         GLES20.glUniform3f(color1Handle, clamp01(color1R), clamp01(color1G), clamp01(color1B));
-        GLES20.glUniform3f(color2Handle, clamp01(color2R), clamp01(color2G), clamp01(color2B));
         GLES20.glUniform1f(y1Handle, y1);
-        GLES20.glUniform1f(y2Handle, y2);
         GLES20.glUniform1f(thicknessHandle, clamp(thickness, 0.0005f, 0.20f));
         GLES20.glUniform1f(featherHandle, clamp(feather, 0.0001f, 0.20f));
         GLES20.glUniform1f(glowWidthHandle, clamp(glowWidth, 0.0f, 0.40f));
@@ -193,9 +176,8 @@ public class RadiumRaysFilter extends GlFilter {
         return this;
     }
 
-    public RadiumRaysFilter setRayPositions(float y1, float y2) {
+    public RadiumRaysFilter setRayPosition(float y1) {
         this.y1 = y1;
-        this.y2 = y2;
         return this;
     }
 
@@ -203,9 +185,8 @@ public class RadiumRaysFilter extends GlFilter {
      * Set distance from top in UV ratio [0..1], easier for "top area" positioning.
      * Example: topOffset=0.08 means y=0.92.
      */
-    public RadiumRaysFilter setRayTopOffsets(float topOffset1, float topOffset2) {
+    public RadiumRaysFilter setRayTopOffset(float topOffset1) {
         this.y1 = 1.0f - topOffset1;
-        this.y2 = 1.0f - topOffset2;
         return this;
     }
 

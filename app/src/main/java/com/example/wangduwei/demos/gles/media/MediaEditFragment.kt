@@ -29,6 +29,7 @@ import com.example.lib_gles.video_filter.filter_impl.GlSoulOutFilter
 import com.example.lib_gles.video_filter.filter_impl.GlWatermarkFilter
 import com.example.lib_gles.video_filter.filter_impl.LightFilter
 import com.example.lib_gles.video_filter.filter_impl.MeteorFilter
+import com.example.lib_gles.video_filter.filter_impl.MeteorFilter2
 import com.example.lib_gles.video_filter.filter_impl.MultiHeartPopFlashFilter
 import com.example.lib_gles.video_filter.filter_impl.PrismaticFilter2
 import com.example.lib_gles.video_filter.filter_impl.RadiumRaysFilter
@@ -427,14 +428,14 @@ class MediaEditFragment: BaseSupportFragment() {
             .setZoomOutDurationMs(500f)
 
         val initialTopRay1 = 0.02f
-        val initialTopRay2 = -0.05f
-        val centerTopRay1 = 0.15f
-        val centerTopRay2 = 0.08f
+//        val initialTopRay2 = -0.05f
+//        val centerTopRay1 = 0.15f
+//        val centerTopRay2 = 0.08f
 
 
         val rayFilter = RadiumRaysFilter()
             .setRayColor(color0.toInt())
-            .setRayTopOffsets(initialTopRay1, initialTopRay2)
+            .setRayTopOffset(initialTopRay1)
             .setThickness(0.0035f)   // 线更细
             .setGlowWidth(0.014f)    // 光晕更窄
             .setGlowIntensity(0.85f) // 光晕更弱
@@ -450,20 +451,30 @@ class MediaEditFragment: BaseSupportFragment() {
                 color2.toInt(), // bottom
                 color3.toInt()  // left
             )
-            .setOpacity(0.64f)
-            .setBrightness(1.2f)
-            .setHeadWidthPx(3f)
-            .setTailWidthPx(1f)
-//            .setHeadCapPx(26f)
-            .setHeadCapScale(0.8f)
-            .setBlurRadiusPx(50f)
-//            .setTailLengthPx(360f)
-            // 按周长比例（例如 18%）
-            .setTailLengthRatio(1f)
-            .setInnerSoftnessPx(8f)
-            .setColorBlendStart(0.20f)
-            .setColorBlendGamma(0.45f)
-            .setSpeedRps(0.1f)
+            .setBlurRadiusPx(100f)
+            .setOpacity(1f)
+            .setBrightness(1f)
+
+            // 细核心 + 大光晕（接近参考图左侧“窄亮条+大片黄雾”）
+            .setHeadWidthPx(0.8f)
+            .setTailWidthPx(0.2f)
+            .setHeadAlpha(0.8f)
+            .setTailAlpha(0.6f)
+            .setInnerSoftnessPx(50f)
+            .setBlurRadiusPx(82f)
+
+            // 尾巴长度与速度
+            .setTailLengthRatio(0.42f)
+            .setSpeedRps(0.085f)
+
+            // 颜色过渡更柔和，避免硬断层
+            .setColorBlendStart(0.05f)
+            .setColorBlendGamma(0.30f)
+            .setCornerBlendLen(0.42f)
+            .setColorMidRatio(0.58f)
+
+            // 头部圆润一点
+            .setHeadCapScale(0.75f)
 
         meteorFilter.setOnCornerColorChangeListener{ cornerIndex, nextColorIndex, nextColor ->
             rayFilter.setRayColor(nextColor)
@@ -490,9 +501,9 @@ class MediaEditFragment: BaseSupportFragment() {
                     } else {
                         1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
                     }
-                    val off1 = centerTopRay1 + (initialTopRay1 - centerTopRay1) * e
-                    val off2 = centerTopRay2 + (initialTopRay2 - centerTopRay2) * e
-                    rayFilter.setRayTopOffsets(off1, off2)
+//                    val off1 = centerTopRay1 + (initialTopRay1 - centerTopRay1) * e
+//                    val off2 = centerTopRay2 + (initialTopRay2 - centerTopRay2) * e
+//                    rayFilter.setRayTopOffsets(off1, off2)
                     meteorFilter.setContentScaleY(scaleY)
 
                     // Expand phase: light returns from target to base.
@@ -508,9 +519,9 @@ class MediaEditFragment: BaseSupportFragment() {
                     } else {
                         1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
                     }
-                    val off1 = initialTopRay1 + (centerTopRay1 - initialTopRay1) * e
-                    val off2 = initialTopRay2 + (centerTopRay2 - initialTopRay2) * e
-                    rayFilter.setRayTopOffsets(off1, off2)
+//                    val off1 = initialTopRay1 + (centerTopRay1 - initialTopRay1) * e
+//                    val off2 = initialTopRay2 + (centerTopRay2 - initialTopRay2) * e
+//                    rayFilter.setRayTopOffsets(off1, off2)
                     meteorFilter.setContentScaleY(scaleY)
 
                     // Shrink phase: after threshold, light ramps to target.
@@ -540,9 +551,9 @@ class MediaEditFragment: BaseSupportFragment() {
             GlFilterPeriod(0,Long.MAX_VALUE, lightFilter),
             // 先做画面几何变换，再叠加边缘层，避免 zoom 时边框被放大裁掉
             GlFilterPeriod(0,Long.MAX_VALUE, zoomFilter),
+            GlFilterPeriod(0,Long.MAX_VALUE, rayFilter),
             GlFilterPeriod(0,Long.MAX_VALUE, verticalScaleFilter),
             GlFilterPeriod(0,Long.MAX_VALUE, meteorFilter),
-            GlFilterPeriod(0,Long.MAX_VALUE, rayFilter),
         )
 
         val outFile = File(requireContext().externalCacheDir, "特效三_${System.currentTimeMillis()}.mp4")
