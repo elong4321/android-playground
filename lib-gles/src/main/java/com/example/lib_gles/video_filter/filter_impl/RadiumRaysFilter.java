@@ -25,6 +25,7 @@ public class RadiumRaysFilter extends GlFilter {
             + "uniform float uGlowIntensity;\n"
             + "uniform float uOpacity;\n"
             + "uniform float uBrightness;\n"
+            + "uniform float uCoreWhiteAlpha;\n"
             + "uniform float uTime;\n"
             + "uniform float uPulseStrength;\n"
             + "uniform float uAnimEnabled;\n"
@@ -63,8 +64,9 @@ public class RadiumRaysFilter extends GlFilter {
             + "    float g4 = lineGlowMask(uv.y, by2, coreHalf, feather, glowW, clamp(uGlowIntensity, 0.0, 4.0));\n"
             + "\n"
             + "    float op = clamp(uOpacity, 0.0, 1.0);\n"
-            + "    vec3 rayCoreCol1 = vec3(1.0);\n"
-            + "    vec3 rayCoreCol2 = vec3(1.0);\n"
+            + "    float whiteA = clamp(uCoreWhiteAlpha, 0.0, 1.0);\n"
+            + "    vec3 rayCoreCol1 = mix(uColor1, vec3(1.0), whiteA);\n"
+            + "    vec3 rayCoreCol2 = mix(uColor2, vec3(1.0), whiteA);\n"
             + "    float gain = clamp(uBrightness, 0.0, 8.0);\n"
             + "    vec3 rays = rayCoreCol1 * (c1 * op) + uColor1 * (g1 * op)\n"
             + "              + rayCoreCol2 * (c2 * op) + uColor2 * (g2 * op)\n"
@@ -84,6 +86,7 @@ public class RadiumRaysFilter extends GlFilter {
     private int glowIntensityHandle = -1;
     private int opacityHandle = -1;
     private int brightnessHandle = -1;
+    private int coreWhiteAlphaHandle = -1;
     private int timeHandle = -1;
     private int pulseStrengthHandle = -1;
     private int animEnabledHandle = -1;
@@ -102,8 +105,9 @@ public class RadiumRaysFilter extends GlFilter {
     private float feather = 0.004f;
     private float glowWidth = 0.026f;
     private float glowIntensity = 1.15f;
-    private float opacity = 0.92f;
+    private float opacity = 1f;
     private float brightness = 1.20f;
+    private float coreWhiteAlpha = 1.0f;
     private boolean animEnabled = true;
     private float pulseStrength = 0.12f;
 
@@ -124,6 +128,7 @@ public class RadiumRaysFilter extends GlFilter {
         glowIntensityHandle = GLES20.glGetUniformLocation(mProgramHandle, "uGlowIntensity");
         opacityHandle = GLES20.glGetUniformLocation(mProgramHandle, "uOpacity");
         brightnessHandle = GLES20.glGetUniformLocation(mProgramHandle, "uBrightness");
+        coreWhiteAlphaHandle = GLES20.glGetUniformLocation(mProgramHandle, "uCoreWhiteAlpha");
         timeHandle = GLES20.glGetUniformLocation(mProgramHandle, "uTime");
         pulseStrengthHandle = GLES20.glGetUniformLocation(mProgramHandle, "uPulseStrength");
         animEnabledHandle = GLES20.glGetUniformLocation(mProgramHandle, "uAnimEnabled");
@@ -151,6 +156,7 @@ public class RadiumRaysFilter extends GlFilter {
         GLES20.glUniform1f(glowIntensityHandle, clamp(glowIntensity, 0.0f, 4.0f));
         GLES20.glUniform1f(opacityHandle, clamp(opacity, 0.0f, 1.0f));
         GLES20.glUniform1f(brightnessHandle, clamp(brightness, 0.0f, 8.0f));
+        GLES20.glUniform1f(coreWhiteAlphaHandle, clamp(coreWhiteAlpha, 0.0f, 1.0f));
         GLES20.glUniform1f(timeHandle, Math.max(0.0f, timeSec));
         GLES20.glUniform1f(pulseStrengthHandle, clamp(pulseStrength, 0.0f, 1.0f));
         GLES20.glUniform1f(animEnabledHandle, animEnabled ? 1.0f : 0.0f);
@@ -230,6 +236,14 @@ public class RadiumRaysFilter extends GlFilter {
 
     public RadiumRaysFilter setBrightness(float brightness) {
         this.brightness = brightness;
+        return this;
+    }
+
+    /**
+     * White core layer alpha: 0 = no white overlay, 1 = fully white core.
+     */
+    public RadiumRaysFilter setCoreWhiteAlpha(float coreWhiteAlpha) {
+        this.coreWhiteAlpha = coreWhiteAlpha;
         return this;
     }
 

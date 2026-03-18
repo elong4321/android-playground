@@ -426,14 +426,20 @@ class MediaEditFragment: BaseSupportFragment() {
             .setZoomInDurationMs(500f)
             .setZoomOutDurationMs(500f)
 
+        val initialTopRay1 = 0.02f
+        val initialTopRay2 = -0.05f
+        val centerTopRay1 = 0.15f
+        val centerTopRay2 = 0.08f
+
+
         val rayFilter = RadiumRaysFilter()
             .setRayColor(color0.toInt())
-            .setRayTopOffsets(-0.08f, -0.15f)
-            .setThickness(0.005f)
-            .setGlowWidth(0.026f)
-            .setGlowIntensity(1.2f)
-            .setOpacity(1f)
-            .setBrightness(1.25f)
+            .setRayTopOffsets(initialTopRay1, initialTopRay2)
+            .setThickness(0.0035f)   // 线更细
+            .setGlowWidth(0.014f)    // 光晕更窄
+            .setGlowIntensity(0.85f) // 光晕更弱
+            .setBrightness(1.25f)    // 整体强度（包括光晕）
+            .setCoreWhiteAlpha(0.45f)// 白色层透明度
             .setPulseStrength(2f)
             .setFlickerStrength(0f)
 
@@ -474,10 +480,7 @@ class MediaEditFragment: BaseSupportFragment() {
                 private val targetLight = 1.45f
                 // Shrink progress reaches this threshold, then begin boosting light.
                 private val shrinkLightStartProgress = 0.9f
-                private val topNearCenter1 = 0.15f
-                private val topNearCenter2 = 0.08f
-                private val topFar1 = -0.08f
-                private val topFar2 = -0.15f
+
 
                 override fun onExpandProgress(cycleIndex: Long, progress: Float, scaleY: Float) {
                     // Expand: move rays away from center (back to top edge area).
@@ -487,8 +490,8 @@ class MediaEditFragment: BaseSupportFragment() {
                     } else {
                         1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
                     }
-                    val off1 = topNearCenter1 + (topFar1 - topNearCenter1) * e
-                    val off2 = topNearCenter2 + (topFar2 - topNearCenter2) * e
+                    val off1 = centerTopRay1 + (initialTopRay1 - centerTopRay1) * e
+                    val off2 = centerTopRay2 + (initialTopRay2 - centerTopRay2) * e
                     rayFilter.setRayTopOffsets(off1, off2)
                     meteorFilter.setContentScaleY(scaleY)
 
@@ -505,8 +508,8 @@ class MediaEditFragment: BaseSupportFragment() {
                     } else {
                         1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
                     }
-                    val off1 = topFar1 + (topNearCenter1 - topFar1) * e
-                    val off2 = topFar2 + (topNearCenter2 - topFar2) * e
+                    val off1 = initialTopRay1 + (centerTopRay1 - initialTopRay1) * e
+                    val off2 = initialTopRay2 + (centerTopRay2 - initialTopRay2) * e
                     rayFilter.setRayTopOffsets(off1, off2)
                     meteorFilter.setContentScaleY(scaleY)
 
