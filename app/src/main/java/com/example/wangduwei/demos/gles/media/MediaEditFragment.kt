@@ -414,6 +414,11 @@ class MediaEditFragment: BaseSupportFragment() {
 //                Color.LTGRAY,
 //            ))
 
+        val color0 = 0xFFFAFF5A
+        val color1 = 0xFFF433E3
+        val color2 = 0xFF5FFFFF
+        val color3 = 0xFF6BFF8E
+
         val lightFilter = LightFilter()
             .setLight(1f)
 
@@ -422,7 +427,7 @@ class MediaEditFragment: BaseSupportFragment() {
             .setZoomOutDurationMs(500f)
 
         val rayFilter = RadiumRaysFilter()
-            .setRayColor(0xFF34F0FF.toInt())
+            .setRayColor(color0.toInt())
             .setRayTopOffsets(-0.08f, -0.15f)
             .setThickness(0.005f)
             .setGlowWidth(0.026f)
@@ -503,10 +508,10 @@ class MediaEditFragment: BaseSupportFragment() {
         val meteorFilter = MeteorFilter()
             .setColor(color)
             .setCornerColors(
-                0xFFFFC84D.toInt(), // top
-                0xFFFF4D8A.toInt(), // right
-                0xFF4DD2FF.toInt(), // bottom
-                0xFFB66BFF.toInt()  // left
+                color0.toInt(), // top
+                color1.toInt(), // right
+                color2.toInt(), // bottom
+                color3.toInt()  // left
             )
             .setOpacity(0.64f)
             .setBrightness(1.2f)
