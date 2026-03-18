@@ -47,6 +47,7 @@ public class MeteorFilter extends GlFilter {
             + "uniform float uBlendGamma;\n"
             + "uniform float uCornerBlendLen;\n"
             + "uniform float uMidRatio;\n"
+            + "uniform float uContentScaleY;\n"
             + "\n"
             + "vec3 edgeBlend(vec3 curr, vec3 next, float tOnEdge) {\n"
             + "    float t = clamp(tOnEdge, 0.0, 1.0);\n"
@@ -111,27 +112,33 @@ public class MeteorFilter extends GlFilter {
             + "    float h = max(uResolution.y, 1.0);\n"
             + "    float x = uv.x * w;\n"
             + "    float y = uv.y * h;\n"
+            + "    float scaleY = clamp(uContentScaleY, 0.01, 1.0);\n"
+            + "    float insetY = (1.0 - scaleY) * 0.5 * h;\n"
+            + "    float yMin = insetY;\n"
+            + "    float yMax = h - insetY;\n"
+            + "    float hInner = max(yMax - yMin, 1.0);\n"
+            + "    float yc = clamp(y, yMin, yMax);\n"
             + "\n"
             + "    float dL = x;\n"
             + "    float dR = w - x;\n"
-            + "    float dB = y;\n"
-            + "    float dT = h - y;\n"
+            + "    float dB = abs(y - yMin);\n"
+            + "    float dT = abs(y - yMax);\n"
             + "    float dEdge = min(min(dL, dR), min(dB, dT));\n"
             + "\n"
             + "    float s;\n"
             + "    if (dT <= dR && dT <= dB && dT <= dL) {\n"
             + "        s = x;\n"
             + "    } else if (dR <= dT && dR <= dB && dR <= dL) {\n"
-            + "        s = w + (h - y);\n"
+            + "        s = w + (yMax - yc);\n"
             + "    } else if (dB <= dT && dB <= dR && dB <= dL) {\n"
-            + "        s = w + h + (w - x);\n"
+            + "        s = w + hInner + (w - x);\n"
             + "    } else {\n"
-            + "        s = w + h + w + y;\n"
+            + "        s = w + hInner + w + (yc - yMin);\n"
             + "    }\n"
             + "\n"
-            + "    float perimeter = 2.0 * (w + h);\n"
+            + "    float perimeter = 2.0 * (w + hInner);\n"
             + "    float headPos = mod(uTimeSec * max(uSpeedRps, 0.0) * perimeter, perimeter);\n"
-            + "    vec3 meteorColor = pickColorByHeadPos(headPos, w, h);\n"
+            + "    vec3 meteorColor = pickColorByHeadPos(headPos, w, hInner);\n"
             + "    float delta = mod(headPos - s + perimeter, perimeter);\n"
             + "    float signedDelta = delta;\n"
             + "    if (signedDelta > 0.5 * perimeter) {\n"
@@ -204,6 +211,7 @@ public class MeteorFilter extends GlFilter {
     private int blendGammaHandle = -1;
     private int cornerBlendLenHandle = -1;
     private int midRatioHandle = -1;
+    private int contentScaleYHandle = -1;
 
     private float color0R = 0.98f;
     private float color0G = 0.80f;
@@ -233,6 +241,7 @@ public class MeteorFilter extends GlFilter {
     private float blendGamma = 0.65f;
     private float cornerBlendLen = 0.22f;
     private float midRatio = 0.5f;
+    private float contentScaleY = 1.0f;
     private long lastPresentationUs = -1L;
     private long lastRealtimeMs = -1L;
     private float accumulatedTimeSec = 0f;
@@ -265,6 +274,7 @@ public class MeteorFilter extends GlFilter {
         blendGammaHandle = GLES20.glGetUniformLocation(mProgramHandle, "uBlendGamma");
         cornerBlendLenHandle = GLES20.glGetUniformLocation(mProgramHandle, "uCornerBlendLen");
         midRatioHandle = GLES20.glGetUniformLocation(mProgramHandle, "uMidRatio");
+        contentScaleYHandle = GLES20.glGetUniformLocation(mProgramHandle, "uContentScaleY");
     }
 
     @Override
@@ -290,13 +300,15 @@ public class MeteorFilter extends GlFilter {
         lastRealtimeMs = nowMs;
         float timeSec = accumulatedTimeSec;
         float perimeterPx = 2f * (mWidth + mHeight);
+        float innerHeightPx = Math.max(1.0f, mHeight * clamp(contentScaleY, 0.01f, 1.0f));
+        float dynamicPerimeterPx = 2f * (mWidth + innerHeightPx);
         float resolvedTailLengthPx = tailLengthRatio >= 0f
-                ? Math.max(1.0f, perimeterPx * clamp(tailLengthRatio, 0.0f, 1.0f))
+                ? Math.max(1.0f, dynamicPerimeterPx * clamp(tailLengthRatio, 0.0f, 1.0f))
                 : Math.max(1.0f, tailLengthPx);
-        float headPosPx = perimeterPx > 0f
-                ? (timeSec * Math.max(0.0f, speedRps) * perimeterPx) % perimeterPx
+        float headPosPx = dynamicPerimeterPx > 0f
+                ? (timeSec * Math.max(0.0f, speedRps) * dynamicPerimeterPx) % dynamicPerimeterPx
                 : 0f;
-        dispatchCornerEvents(headPosPx, perimeterPx, mWidth, mHeight);
+        dispatchCornerEvents(headPosPx, dynamicPerimeterPx, mWidth, innerHeightPx);
         lastHeadPosPx = headPosPx;
         GLES20.glUniform2f(resolutionHandle, mWidth, mHeight);
         GLES20.glUniform3f(color0Handle, clamp01(color0R), clamp01(color0G), clamp01(color0B));
@@ -317,6 +329,7 @@ public class MeteorFilter extends GlFilter {
         GLES20.glUniform1f(blendGammaHandle, Math.max(0.25f, blendGamma));
         GLES20.glUniform1f(cornerBlendLenHandle, clamp(cornerBlendLen, 0.0f, 0.8f));
         GLES20.glUniform1f(midRatioHandle, clamp(midRatio, 0.1f, 0.9f));
+        GLES20.glUniform1f(contentScaleYHandle, clamp(contentScaleY, 0.01f, 1.0f));
     }
 
     @Override
@@ -335,33 +348,6 @@ public class MeteorFilter extends GlFilter {
         accumulatedTimeSec = 0f;
         lastHeadPosPx = -1f;
         super.release();
-    }
-
-    public MeteorFilter setColor(float r, float g, float b) {
-        float rr = clamp01(r);
-        float gg = clamp01(g);
-        float bb = clamp01(b);
-        this.color0R = rr;
-        this.color0G = gg;
-        this.color0B = bb;
-        this.color1R = rr;
-        this.color1G = gg;
-        this.color1B = bb;
-        this.color2R = rr;
-        this.color2G = gg;
-        this.color2B = bb;
-        this.color3R = rr;
-        this.color3G = gg;
-        this.color3B = bb;
-        return this;
-    }
-
-    public MeteorFilter setColor(int color) {
-        float rr = Color.red(color) / 255f;
-        float gg = Color.green(color) / 255f;
-        float bb = Color.blue(color) / 255f;
-        setColor(rr, gg, bb);
-        return this;
     }
 
     /**
@@ -506,6 +492,15 @@ public class MeteorFilter extends GlFilter {
      */
     public MeteorFilter setColorMidRatio(float midRatio) {
         this.midRatio = clamp(midRatio, 0.1f, 0.9f);
+        return this;
+    }
+
+    /**
+     * Follow vertical content scale (same meaning as GlPulseVerticalScaleFilter uScaleY).
+     * 1.0 = no vertical shrink; smaller value moves border toward center vertically.
+     */
+    public MeteorFilter setContentScaleY(float contentScaleY) {
+        this.contentScaleY = clamp(contentScaleY, 0.01f, 1.0f);
         return this;
     }
 

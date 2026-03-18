@@ -437,76 +437,7 @@ class MediaEditFragment: BaseSupportFragment() {
             .setPulseStrength(2f)
             .setFlickerStrength(0f)
 
-        val verticalScaleFilter = GlPulseVerticalScaleFilter()
-            .setTargetScaleY(0.7f)
-            .setShrinkDurationMs(200f)
-            .setExpandDurationMs(200f)
-            .setIntervalMs(3000f)
-            .setOnPulseProgressListener(object: GlPulseVerticalScaleFilter.OnPulseProgressListener {
-                private val baseLight = 1.0f
-                private val targetLight = 1.45f
-                // Shrink progress reaches this threshold, then begin boosting light.
-                private val shrinkLightStartProgress = 0.9f
-                private val topNearCenter1 = 0.15f
-                private val topNearCenter2 = 0.08f
-                private val topFar1 = -0.08f
-                private val topFar2 = -0.15f
-
-                override fun onExpandProgress(cycleIndex: Long, progress: Float, scaleY: Float) {
-                    // Expand: move rays away from center (back to top edge area).
-                    val t = progress.coerceIn(0f, 1f)
-                    val e = if (t < 0.5f) {
-                        2f * t * t
-                    } else {
-                        1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
-                    }
-                    val off1 = topNearCenter1 + (topFar1 - topNearCenter1) * e
-                    val off2 = topNearCenter2 + (topFar2 - topNearCenter2) * e
-                    rayFilter.setRayTopOffsets(off1, off2)
-
-                    // Expand phase: light returns from target to base.
-                    val light = targetLight + (baseLight - targetLight) * e
-                    lightFilter.setLight(light)
-                }
-
-                override fun onShrinkProgress(cycleIndex: Long, progress: Float, scaleY: Float) {
-                    // Shrink: move rays toward center.
-                    val t = progress.coerceIn(0f, 1f)
-                    val e = if (t < 0.5f) {
-                        2f * t * t
-                    } else {
-                        1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
-                    }
-                    val off1 = topFar1 + (topNearCenter1 - topFar1) * e
-                    val off2 = topFar2 + (topNearCenter2 - topFar2) * e
-                    rayFilter.setRayTopOffsets(off1, off2)
-
-                    // Shrink phase: after threshold, light ramps to target.
-                    val lt = if (t <= shrinkLightStartProgress) {
-                        0f
-                    } else {
-                        ((t - shrinkLightStartProgress) / (1f - shrinkLightStartProgress)).coerceIn(0f, 1f)
-                    }
-                    val light = baseLight + (targetLight - baseLight) * lt
-                    lightFilter.setLight(light)
-                }
-            })
-
-
-        val color: Int = 0xFF8A2BE2.toInt();
-
-        val edgeGradientFrameFilter = GlEdgeGradientFrameFilter()
-            .setColor(color)
-            .setWidthRatio(0.12f)
-            .setDarkness(0.35f)
-            .setLightness(0.25f)
-            .setOpacity(0.78f)
-            .setFeather(0.06f)
-            .setGlowWidth(0.05f)
-            .setGlowIntensity(0.55f)
-
         val meteorFilter = MeteorFilter()
-            .setColor(color)
             .setCornerColors(
                 color0.toInt(), // top
                 color1.toInt(), // right
@@ -533,13 +464,82 @@ class MediaEditFragment: BaseSupportFragment() {
 
         }
 
+        val verticalScaleFilter = GlPulseVerticalScaleFilter()
+            .setTargetScaleY(0.7f)
+            .setShrinkDurationMs(200f)
+            .setExpandDurationMs(200f)
+            .setIntervalMs(3000f)
+            .setOnPulseProgressListener(object: GlPulseVerticalScaleFilter.OnPulseProgressListener {
+                private val baseLight = 1.0f
+                private val targetLight = 1.45f
+                // Shrink progress reaches this threshold, then begin boosting light.
+                private val shrinkLightStartProgress = 0.9f
+                private val topNearCenter1 = 0.15f
+                private val topNearCenter2 = 0.08f
+                private val topFar1 = -0.08f
+                private val topFar2 = -0.15f
+
+                override fun onExpandProgress(cycleIndex: Long, progress: Float, scaleY: Float) {
+                    // Expand: move rays away from center (back to top edge area).
+                    val t = progress.coerceIn(0f, 1f)
+                    val e = if (t < 0.5f) {
+                        2f * t * t
+                    } else {
+                        1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
+                    }
+                    val off1 = topNearCenter1 + (topFar1 - topNearCenter1) * e
+                    val off2 = topNearCenter2 + (topFar2 - topNearCenter2) * e
+                    rayFilter.setRayTopOffsets(off1, off2)
+                    meteorFilter.setContentScaleY(scaleY)
+
+                    // Expand phase: light returns from target to base.
+                    val light = targetLight + (baseLight - targetLight) * e
+                    lightFilter.setLight(light)
+                }
+
+                override fun onShrinkProgress(cycleIndex: Long, progress: Float, scaleY: Float) {
+                    // Shrink: move rays toward center.
+                    val t = progress.coerceIn(0f, 1f)
+                    val e = if (t < 0.5f) {
+                        2f * t * t
+                    } else {
+                        1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
+                    }
+                    val off1 = topFar1 + (topNearCenter1 - topFar1) * e
+                    val off2 = topFar2 + (topNearCenter2 - topFar2) * e
+                    rayFilter.setRayTopOffsets(off1, off2)
+                    meteorFilter.setContentScaleY(scaleY)
+
+                    // Shrink phase: after threshold, light ramps to target.
+                    val lt = if (t <= shrinkLightStartProgress) {
+                        0f
+                    } else {
+                        ((t - shrinkLightStartProgress) / (1f - shrinkLightStartProgress)).coerceIn(0f, 1f)
+                    }
+                    val light = baseLight + (targetLight - baseLight) * lt
+                    lightFilter.setLight(light)
+                }
+            })
+
+
+//        val color: Int = 0xFF8A2BE2.toInt();
+//        val edgeGradientFrameFilter = GlEdgeGradientFrameFilter()
+//            .setColor(color)
+//            .setWidthRatio(0.12f)
+//            .setDarkness(0.35f)
+//            .setLightness(0.25f)
+//            .setOpacity(0.78f)
+//            .setFeather(0.06f)
+//            .setGlowWidth(0.05f)
+//            .setGlowIntensity(0.55f)
+
         val filterGroup = GlFilterGroup(
             GlFilterPeriod(0,Long.MAX_VALUE, lightFilter),
             // 先做画面几何变换，再叠加边缘层，避免 zoom 时边框被放大裁掉
             GlFilterPeriod(0,Long.MAX_VALUE, zoomFilter),
-            GlFilterPeriod(0,Long.MAX_VALUE, rayFilter),
-            GlFilterPeriod(0,Long.MAX_VALUE, meteorFilter),
             GlFilterPeriod(0,Long.MAX_VALUE, verticalScaleFilter),
+            GlFilterPeriod(0,Long.MAX_VALUE, meteorFilter),
+            GlFilterPeriod(0,Long.MAX_VALUE, rayFilter),
         )
 
         val outFile = File(requireContext().externalCacheDir, "特效三_${System.currentTimeMillis()}.mp4")
