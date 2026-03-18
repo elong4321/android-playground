@@ -5,6 +5,9 @@ import android.os.SystemClock;
 
 import com.example.lib_gles.video_filter.core.filter.GlFilter;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Vertical pulse scale effect:
  * - Scale Y from 1.0 to targetScaleY during shrinkDurationMs.
@@ -12,6 +15,20 @@ import com.example.lib_gles.video_filter.core.filter.GlFilter;
  * - Wait intervalMs, then repeat.
  */
 public class GlPulseVerticalScaleFilter extends GlFilter {
+    private static class PulseSegment {
+        final float startMs;
+        final float splitMs;
+        final float endMs;
+        final float targetScaleY;
+
+        PulseSegment(float startMs, float splitMs, float endMs, float targetScaleY) {
+            this.startMs = startMs;
+            this.splitMs = splitMs;
+            this.endMs = endMs;
+            this.targetScaleY = targetScaleY;
+        }
+    }
+
     public interface OnPulseProgressListener {
         void onShrinkProgress(long cycleIndex, float progress, float scaleY);
         void onExpandProgress(long cycleIndex, float progress, float scaleY);
@@ -52,6 +69,8 @@ public class GlPulseVerticalScaleFilter extends GlFilter {
     private float intervalMs = 1000f;
     private long firstPresentationMs = -1L;
     private OnPulseProgressListener onPulseProgressListener;
+    private final List<PulseSegment> timelineSegments = new ArrayList<>();
+    private float timelineLoopDurationMs = -1f;
 
     public GlPulseVerticalScaleFilter() {
         super(VERTEX_SHADER, FRAGMENT_SHADER);
@@ -79,6 +98,10 @@ public class GlPulseVerticalScaleFilter extends GlFilter {
         }
 
         float elapsedMs = nowMs - firstPresentationMs;
+        if (!timelineSegments.isEmpty()) {
+            drawTimeline(elapsedMs);
+            return;
+        }
         float effectMs = Math.max(1f, shrinkDurationMs + expandDurationMs);
         float cycleMs = Math.max(1f, effectMs + Math.max(0f, intervalMs));
         long cycleIndex = (long) Math.floor(elapsedMs / cycleMs);
@@ -105,6 +128,38 @@ public class GlPulseVerticalScaleFilter extends GlFilter {
         GLES20.glUniform1f(scaleYHandle, scaleY);
     }
 
+    private void drawTimeline(float elapsedMs) {
+        float loopMs = timelineLoopDurationMs > 0f ? timelineLoopDurationMs : inferTimelineDuration();
+        if (loopMs <= 0f) {
+            GLES20.glUniform1f(scaleYHandle, 1.0f);
+            return;
+        }
+        float t = elapsedMs % loopMs;
+        long cycleIndex = (long) Math.floor(elapsedMs / loopMs);
+        for (int i = 0; i < timelineSegments.size(); i++) {
+            PulseSegment seg = timelineSegments.get(i);
+            if (t >= seg.startMs && t < seg.endMs) {
+                float scaleY;
+                if (t < seg.splitMs) {
+                    float p = (t - seg.startMs) / Math.max(1f, seg.splitMs - seg.startMs);
+                    scaleY = 1.0f + (seg.targetScaleY - 1.0f) * p;
+                    if (onPulseProgressListener != null) {
+                        onPulseProgressListener.onShrinkProgress(cycleIndex, clamp(p, 0f, 1f), scaleY);
+                    }
+                } else {
+                    float p = (t - seg.splitMs) / Math.max(1f, seg.endMs - seg.splitMs);
+                    scaleY = seg.targetScaleY + (1.0f - seg.targetScaleY) * p;
+                    if (onPulseProgressListener != null) {
+                        onPulseProgressListener.onExpandProgress(cycleIndex, clamp(p, 0f, 1f), scaleY);
+                    }
+                }
+                GLES20.glUniform1f(scaleYHandle, scaleY);
+                return;
+            }
+        }
+        GLES20.glUniform1f(scaleYHandle, 1.0f);
+    }
+
     public GlPulseVerticalScaleFilter setTargetScaleY(float targetScaleY) {
         this.targetScaleY = clamp(targetScaleY, 0.01f, 1.0f);
         return this;
@@ -128,6 +183,35 @@ public class GlPulseVerticalScaleFilter extends GlFilter {
     public GlPulseVerticalScaleFilter setOnPulseProgressListener(OnPulseProgressListener listener) {
         this.onPulseProgressListener = listener;
         return this;
+    }
+
+    public GlPulseVerticalScaleFilter clearTimelineSegments() {
+        timelineSegments.clear();
+        timelineLoopDurationMs = -1f;
+        return this;
+    }
+
+    public GlPulseVerticalScaleFilter addTimelineSegment(
+            float startMs, float splitMs, float endMs, float targetScaleY) {
+        float s = Math.max(0f, startMs);
+        float m = Math.max(s + 1f, splitMs);
+        float e = Math.max(m + 1f, endMs);
+        timelineSegments.add(new PulseSegment(s, m, e, clamp(targetScaleY, 0.01f, 1.0f)));
+        timelineLoopDurationMs = Math.max(timelineLoopDurationMs, e);
+        return this;
+    }
+
+    public GlPulseVerticalScaleFilter setTimelineLoopDurationMs(float timelineLoopDurationMs) {
+        this.timelineLoopDurationMs = Math.max(1f, timelineLoopDurationMs);
+        return this;
+    }
+
+    private float inferTimelineDuration() {
+        float end = 0f;
+        for (int i = 0; i < timelineSegments.size(); i++) {
+            end = Math.max(end, timelineSegments.get(i).endMs);
+        }
+        return end;
     }
 
     private static float clamp(float v, float min, float max) {

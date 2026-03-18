@@ -423,10 +423,6 @@ class MediaEditFragment: BaseSupportFragment() {
         val lightFilter = LightFilter()
             .setLight(1f)
 
-        val zoomFilter = GlPulseZoomFilter(2f)
-            .setZoomInDurationMs(500f)
-            .setZoomOutDurationMs(500f)
-
         val initialTopRay1 = 0.02f
 //        val initialTopRay2 = -0.05f
 //        val centerTopRay1 = 0.15f
@@ -440,11 +436,11 @@ class MediaEditFragment: BaseSupportFragment() {
             .setGlowWidth(0.014f)    // 光晕更窄
             .setGlowIntensity(0.85f) // 光晕更弱
             .setBrightness(1.25f)    // 整体强度（包括光晕）
-            .setCoreWhiteAlpha(0.45f)// 白色层透明度
+            .setCoreWhiteAlpha(0.15f)// 白色层透明度
             .setPulseStrength(2f)
             .setFlickerStrength(0f)
 
-        val meteorFilter = MeteorFilter()
+        val meteorFilter = MeteorFilter2()
             .setCornerColors(
                 color0.toInt(), // top
                 color1.toInt(), // right
@@ -454,7 +450,6 @@ class MediaEditFragment: BaseSupportFragment() {
             .setBlurRadiusPx(100f)
             .setOpacity(1f)
             .setBrightness(1f)
-
             // 细核心 + 大光晕（接近参考图左侧“窄亮条+大片黄雾”）
             .setHeadWidthPx(0.8f)
             .setTailWidthPx(0.2f)
@@ -481,50 +476,50 @@ class MediaEditFragment: BaseSupportFragment() {
 
         }
 
+        val rhythmLoopMs = 5466f // 5:14 @ 30fps
+
+        val zoomFilter = GlPulseZoomFilter()
+            .clearTimelineSegments()
+            .setTimelineIdleScale(1.0f)
+            .setTimelineLoopDurationMs(rhythmLoopMs)
+            .addTimelineSegment(0f, 433f, 1.00f, 1.35f)       // 0:00 ~ 0:13
+            .addTimelineSegment(600f, 1000f, 1.35f, 1.45f)    // 0:18 ~ 1:00
+            .addTimelineSegment(1200f, 1566f, 1.45f, 1.65f)   // 1:06 ~ 1:17
+            .addTimelineSegment(1566f, 2466f, 1.65f, 1.00f)   // 1:17 ~ 2:14
+            .addTimelineSegment(3400f, 4366f, 1.00f, 1.45f)   // 3:12 ~ 4:11
+            .addTimelineSegment(4500f, 5133f, 1.45f, 1.00f)   // 4:15 ~ 5:04
+
         val verticalScaleFilter = GlPulseVerticalScaleFilter()
-            .setTargetScaleY(0.7f)
-            .setShrinkDurationMs(200f)
-            .setExpandDurationMs(200f)
-            .setIntervalMs(3000f)
-            .setOnPulseProgressListener(object: GlPulseVerticalScaleFilter.OnPulseProgressListener {
+            .clearTimelineSegments()
+            .setTimelineLoopDurationMs(rhythmLoopMs)
+            .addTimelineSegment(433f, 533f, 600f, 0.75f)       // 0:13 ~ 0:16 ~ 0:18
+            .addTimelineSegment(1033f, 1200f, 1433f, 0.75f)    // 1:01 ~ 1:06 ~ 1:13
+            .addTimelineSegment(1566f, 1866f, 2133f, 0.75f)    // 1:17 ~ 1:26 ~ 2:04
+            .addTimelineSegment(2433f, 2533f, 2866f, 0.75f)    // 2:13 ~ 2:16 ~ 2:26
+            .addTimelineSegment(2900f, 3200f, 3400f, 0.75f)    // 2:27 ~ 3:06 ~ 3:12
+            .addTimelineSegment(3566f, 3866f, 4133f, 0.75f)    // 3:17 ~ 3:26 ~ 4:04
+            .addTimelineSegment(4333f, 4533f, 4866f, 0.75f)    // 4:10 ~ 4:16 ~ 4:26
+            .addTimelineSegment(4900f, 5233f, 5466f, 0.75f)    // 4:27 ~ 5:07 ~ 5:14
+            .setOnPulseProgressListener(object : GlPulseVerticalScaleFilter.OnPulseProgressListener {
                 private val baseLight = 1.0f
                 private val targetLight = 1.45f
-                // Shrink progress reaches this threshold, then begin boosting light.
                 private val shrinkLightStartProgress = 0.9f
 
-
                 override fun onExpandProgress(cycleIndex: Long, progress: Float, scaleY: Float) {
-                    // Expand: move rays away from center (back to top edge area).
                     val t = progress.coerceIn(0f, 1f)
                     val e = if (t < 0.5f) {
                         2f * t * t
                     } else {
                         1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
                     }
-//                    val off1 = centerTopRay1 + (initialTopRay1 - centerTopRay1) * e
-//                    val off2 = centerTopRay2 + (initialTopRay2 - centerTopRay2) * e
-//                    rayFilter.setRayTopOffsets(off1, off2)
                     meteorFilter.setContentScaleY(scaleY)
-
-                    // Expand phase: light returns from target to base.
                     val light = targetLight + (baseLight - targetLight) * e
                     lightFilter.setLight(light)
                 }
 
                 override fun onShrinkProgress(cycleIndex: Long, progress: Float, scaleY: Float) {
-                    // Shrink: move rays toward center.
                     val t = progress.coerceIn(0f, 1f)
-                    val e = if (t < 0.5f) {
-                        2f * t * t
-                    } else {
-                        1f - ((-2f * t + 2f) * (-2f * t + 2f)) / 2f
-                    }
-//                    val off1 = initialTopRay1 + (centerTopRay1 - initialTopRay1) * e
-//                    val off2 = initialTopRay2 + (centerTopRay2 - initialTopRay2) * e
-//                    rayFilter.setRayTopOffsets(off1, off2)
                     meteorFilter.setContentScaleY(scaleY)
-
-                    // Shrink phase: after threshold, light ramps to target.
                     val lt = if (t <= shrinkLightStartProgress) {
                         0f
                     } else {
@@ -548,12 +543,11 @@ class MediaEditFragment: BaseSupportFragment() {
 //            .setGlowIntensity(0.55f)
 
         val filterGroup = GlFilterGroup(
-            GlFilterPeriod(0,Long.MAX_VALUE, lightFilter),
-            // 先做画面几何变换，再叠加边缘层，避免 zoom 时边框被放大裁掉
-            GlFilterPeriod(0,Long.MAX_VALUE, zoomFilter),
-            GlFilterPeriod(0,Long.MAX_VALUE, rayFilter),
-            GlFilterPeriod(0,Long.MAX_VALUE, verticalScaleFilter),
-            GlFilterPeriod(0,Long.MAX_VALUE, meteorFilter),
+            GlFilterPeriod(0, Long.MAX_VALUE, lightFilter),
+            GlFilterPeriod(0, Long.MAX_VALUE, zoomFilter),
+            GlFilterPeriod(0, Long.MAX_VALUE, rayFilter),
+            GlFilterPeriod(0, Long.MAX_VALUE, verticalScaleFilter),
+            GlFilterPeriod(0, Long.MAX_VALUE, meteorFilter),
         )
 
         val outFile = File(requireContext().externalCacheDir, "特效三_${System.currentTimeMillis()}.mp4")
