@@ -20,8 +20,9 @@ import com.example.lib_gles.video_filter.core.filter.GlFilterPeriod
 import com.example.lib_gles.video_filter.core.filter.TimeScaleFilter
 import com.example.lib_gles.video_filter.filter_impl.GlDualSideMarqueeFilter
 import com.example.lib_gles.video_filter.filter_impl.GlDynamicMosaicFilter
-import com.example.lib_gles.video_filter.filter_impl.GlEdgeGradientFrameFilter
-import com.example.lib_gles.video_filter.filter_impl.GlMosaicShiftCascadeFilter
+import com.example.lib_gles.video_filter.filter_impl.GlEdgePingPongFilter
+import com.example.lib_gles.video_filter.filter_impl.GlMosaicShiftCascadeFilter2
+import com.example.lib_gles.video_filter.filter_impl.GlMosaicShiftCascadeFilter3
 import com.example.lib_gles.video_filter.filter_impl.GlMosaicShiftCascadeFilter5
 import com.example.lib_gles.video_filter.filter_impl.GlPulseVerticalScaleFilter
 import com.example.lib_gles.video_filter.filter_impl.GlPulseZoomFilter
@@ -445,17 +446,6 @@ class MediaEditFragment: BaseSupportFragment() {
 
     private fun onClickEffect3(textView: TextView) {
 
-//        val radialColorFilter = GlRadialSpreadColorFilter()
-//            .setCycleDurationSec(1.6f)
-//            .setMaxIntensity(0.88f)
-//            .setSpreadSoftness(0.10f)
-//            .setColorList(arrayListOf<Int>(
-//                Color.RED,
-//                Color.YELLOW,
-//                Color.DKGRAY,
-//                Color.LTGRAY,
-//            ))
-
         val color0 = 0xFFFAFF5A
         val color1 = 0xFFF433E3
         val color2 = 0xFF5FFFFF
@@ -465,9 +455,6 @@ class MediaEditFragment: BaseSupportFragment() {
             .setLight(1f)
 
         val initialTopRay1 = 0.02f
-//        val initialTopRay2 = -0.05f
-//        val centerTopRay1 = 0.15f
-//        val centerTopRay2 = 0.08f
 
 
         val rayFilter = RadiumRaysFilter()
@@ -488,27 +475,27 @@ class MediaEditFragment: BaseSupportFragment() {
                 color2.toInt(), // bottom
                 color3.toInt()  // left
             )
-            .setBlurRadiusPx(100f)
-            .setOpacity(1f)
-            .setBrightness(1f)
-            // 细核心 + 大光晕（接近参考图左侧“窄亮条+大片黄雾”）
-            .setHeadWidthPx(0.8f)
-            .setTailWidthPx(0.2f)
-            .setHeadAlpha(0.8f)
-            .setTailAlpha(0.6f)
-            .setInnerSoftnessPx(50f)
-            .setBlurRadiusPx(82f)
-
-            // 尾巴长度与速度
+            // 基础形态
+            .setOpacity(1.0f)
+            .setBrightness(1.0f)
+            .setHeadWidthPx(0.9f)
+            .setTailWidthPx(0.25f)
             .setTailLengthRatio(0.42f)
+            .setInnerSoftnessPx(48f)
+            .setBlurRadiusPx(78f)
+            .setHeadCapScale(0.75f)
             .setSpeedRps(0.085f)
 
-            // 颜色过渡更柔和，避免硬断层
-            .setColorBlendStart(0.05f)
-            .setColorBlendGamma(0.30f)
+            // 纵向透明度曲线
+            .setHeadAlpha(0.82f)
+            .setTailAlpha(0.60f)
+
+            // 颜色过渡（边角衔接）
+            .setColorBlendStart(0.06f)
+            .setColorBlendGamma(0.32f)
             .setCornerBlendLen(0.42f)
             .setColorMidRatio(0.58f)
-
+            .setGlowRangeScale(2f)
             // 头部圆润一点
             .setHeadCapScale(0.75f)
 
@@ -530,17 +517,19 @@ class MediaEditFragment: BaseSupportFragment() {
             .addTimelineSegment(3400f, 4366f, 1.00f, 1.45f)   // 3:12 ~ 4:11
             .addTimelineSegment(4500f, 5133f, 1.45f, 1.00f)   // 4:15 ~ 5:04
 
+
+        val yScale = 0.8f
         val verticalScaleFilter = GlPulseVerticalScaleFilter()
             .clearTimelineSegments()
             .setTimelineLoopDurationMs(rhythmLoopMs)
-            .addTimelineSegment(433f, 533f, 600f, 0.75f)       // 0:13 ~ 0:16 ~ 0:18
-            .addTimelineSegment(1033f, 1200f, 1433f, 0.75f)    // 1:01 ~ 1:06 ~ 1:13
-            .addTimelineSegment(1566f, 1866f, 2133f, 0.75f)    // 1:17 ~ 1:26 ~ 2:04
-            .addTimelineSegment(2433f, 2533f, 2866f, 0.75f)    // 2:13 ~ 2:16 ~ 2:26
-            .addTimelineSegment(2900f, 3200f, 3400f, 0.75f)    // 2:27 ~ 3:06 ~ 3:12
-            .addTimelineSegment(3566f, 3866f, 4133f, 0.75f)    // 3:17 ~ 3:26 ~ 4:04
-            .addTimelineSegment(4333f, 4533f, 4866f, 0.75f)    // 4:10 ~ 4:16 ~ 4:26
-            .addTimelineSegment(4900f, 5233f, 5466f, 0.75f)    // 4:27 ~ 5:07 ~ 5:14
+            .addTimelineSegment(433f, 533f, 600f, yScale)       // 0:13 ~ 0:16 ~ 0:18
+            .addTimelineSegment(1033f, 1200f, 1433f, yScale)    // 1:01 ~ 1:06 ~ 1:13
+            .addTimelineSegment(1566f, 1866f, 2133f, yScale)    // 1:17 ~ 1:26 ~ 2:04
+            .addTimelineSegment(2433f, 2533f, 2866f, yScale)    // 2:13 ~ 2:16 ~ 2:26
+            .addTimelineSegment(2900f, 3200f, 3400f, yScale)    // 2:27 ~ 3:06 ~ 3:12
+            .addTimelineSegment(3566f, 3866f, 4133f, yScale)    // 3:17 ~ 3:26 ~ 4:04
+            .addTimelineSegment(4333f, 4533f, 4866f, yScale)    // 4:10 ~ 4:16 ~ 4:26
+            .addTimelineSegment(4900f, 5233f, 5466f, yScale)    // 4:27 ~ 5:07 ~ 5:14
             .setOnPulseProgressListener(object : GlPulseVerticalScaleFilter.OnPulseProgressListener {
                 private val baseLight = 1.0f
                 private val targetLight = 1.45f
@@ -570,18 +559,6 @@ class MediaEditFragment: BaseSupportFragment() {
                     lightFilter.setLight(light)
                 }
             })
-
-
-//        val color: Int = 0xFF8A2BE2.toInt();
-//        val edgeGradientFrameFilter = GlEdgeGradientFrameFilter()
-//            .setColor(color)
-//            .setWidthRatio(0.12f)
-//            .setDarkness(0.35f)
-//            .setLightness(0.25f)
-//            .setOpacity(0.78f)
-//            .setFeather(0.06f)
-//            .setGlowWidth(0.05f)
-//            .setGlowIntensity(0.55f)
 
         val filterGroup = GlFilterGroup(
             GlFilterPeriod(0, Long.MAX_VALUE, lightFilter),
