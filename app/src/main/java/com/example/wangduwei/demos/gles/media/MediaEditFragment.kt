@@ -468,7 +468,7 @@ class MediaEditFragment: BaseSupportFragment() {
             .setPulseStrength(2f)
             .setFlickerStrength(0f)
 
-        val meteorFilter = MeteorFilter2()
+        val meteorFilter = MeteorFilter()
             .setCornerColors(
                 color0.toInt(), // top
                 color1.toInt(), // right
@@ -479,23 +479,24 @@ class MediaEditFragment: BaseSupportFragment() {
             .setOpacity(1.0f)
             .setBrightness(1.0f)
             .setHeadWidthPx(0.9f)
-            .setTailWidthPx(0.25f)
-            .setTailLengthRatio(0.42f)
+            .setTailWidthPx(0.9f)
+            .setTailLengthRatio(1f)
             .setInnerSoftnessPx(48f)
+//            .setInnerCornerRadiusRatio(0.1f)
             .setBlurRadiusPx(78f)
             .setHeadCapScale(0.75f)
             .setSpeedRps(0.085f)
 
             // 纵向透明度曲线
-            .setHeadAlpha(0.82f)
-            .setTailAlpha(0.60f)
+//            .setHeadAlpha(0.82f)
+//            .setTailAlpha(0.60f)
 
             // 颜色过渡（边角衔接）
             .setColorBlendStart(0.06f)
             .setColorBlendGamma(0.32f)
             .setCornerBlendLen(0.42f)
             .setColorMidRatio(0.58f)
-            .setGlowRangeScale(2f)
+//            .setGlowRangeScale(2f)
             // 头部圆润一点
             .setHeadCapScale(0.75f)
 
