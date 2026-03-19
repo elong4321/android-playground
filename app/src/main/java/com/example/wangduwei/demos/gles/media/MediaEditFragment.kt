@@ -22,6 +22,7 @@ import com.example.lib_gles.video_filter.filter_impl.GlDualSideMarqueeFilter
 import com.example.lib_gles.video_filter.filter_impl.GlDynamicMosaicFilter
 import com.example.lib_gles.video_filter.filter_impl.GlEdgeGradientFrameFilter
 import com.example.lib_gles.video_filter.filter_impl.GlMosaicShiftCascadeFilter
+import com.example.lib_gles.video_filter.filter_impl.GlMosaicShiftCascadeFilter5
 import com.example.lib_gles.video_filter.filter_impl.GlPulseVerticalScaleFilter
 import com.example.lib_gles.video_filter.filter_impl.GlPulseZoomFilter
 import com.example.lib_gles.video_filter.filter_impl.GlRadialSpreadColorFilter
@@ -338,17 +339,36 @@ class MediaEditFragment: BaseSupportFragment() {
 
     private fun onClickEffect1Test(textView: TextView) {
 
-        val shakeStep1 = 2000f
-        val shakeStep2 = 4000f
-        val shakeStep3 = 7000f
-        val shakeStep4 = 9000f
+        val loopDuration = 15000f
 
-        val shakeDuration = 400
+        val shakeDuration = 300
+
+        val shakeStrength = -0.3f
+
+        val shakeStep1 = 533f
+        val shakeStep2 = 1033f
+        val shakeStep3 = 1800f
+        val shakeStep4 = 2033f
+        val shakeStep5 = 5733f
+        val shakeStep6 = 8367f
+        val shakeStep7 = 13567f
 
         val shakeEnd1 = shakeStep1 + shakeDuration
         val shakeEnd2 = shakeStep2 + shakeDuration
-        val shakeEnd3 = shakeStep3 + shakeDuration
+        val shakeEnd3 = shakeStep3 + 133
         val shakeEnd4 = shakeStep4 + shakeDuration
+        val shakeEnd5 = shakeStep5 + shakeDuration
+        val shakeEnd6 = shakeStep6 + shakeDuration
+        val shakeEnd7 = shakeStep7 + shakeDuration
+
+        val shakeVertically1 = 3133f
+        val shakeVertically2 = 10900f
+
+        val shakeEndVertically1 = shakeVertically1 + shakeDuration
+        val shakeEndVertically2 = shakeVertically2 + shakeDuration
+
+        val scaleTarget = 1.5f
+
 
         val shiftMosaicFilter = GlMosaicShiftCascadeFilter5()
             .setMosaicMaxBlockSize(10f)
@@ -356,7 +376,13 @@ class MediaEditFragment: BaseSupportFragment() {
             .setMaxShakeScale(1.3f)
             .setMaxShakeStretch(1.35f, 1.0f)
 //            .setMaxShakeBlur(0.05f)
+            .setCrystalSizeScale(2.4f)
+            .setCrystalThreshold(0.74f)
+            .setCrystalSoftness(0.09f)
             .setMaxShakeSampleScale(8.0f)
+            .setCrystalEdgeBoost(2f)
+            .setLoopEnabled(true)
+            .setLoopDurationMs(loopDuration)
             .clearMosaicKeyframes()
             .addMosaicLevelKeyframe(0f, 1.0f)
             .addMosaicLevelKeyframe(shakeEnd1, 0.7f)
@@ -365,16 +391,31 @@ class MediaEditFragment: BaseSupportFragment() {
             .addMosaicLevelKeyframe(shakeEnd4, 0.20f)
             .addMosaicLevelKeyframe(shakeEnd4 + 1000, 0f)
             .clearZoomEvents()
-            .addZoomEvent(shakeEnd4, shakeEnd4 + 1000f, 1.0f, 1.3f, GlMosaicShiftCascadeFilter3.EASE_SMOOTH)
-            .addZoomEvent(shakeEnd4 + 1000f, Float.MAX_VALUE, 1.3f, 1.3f, GlMosaicShiftCascadeFilter3.EASE_LINEAR)
+            .addZoomEvent(shakeEnd4, shakeEnd4 + 1000f, 1.0f, scaleTarget, GlMosaicShiftCascadeFilter3.EASE_SMOOTH)
+            .addZoomEvent(shakeEnd4 + 1000f, Float.MAX_VALUE, scaleTarget, scaleTarget, GlMosaicShiftCascadeFilter3.EASE_LINEAR)
             .clearShakeEvents()
-            .addPulseShakeEvent(shakeStep1, shakeEnd1, -0.30f, 0f)
-            .addPulseShakeEvent(shakeStep2, shakeEnd2, -0.30f, 0f)
-            .addPulseShakeEvent(shakeStep3, shakeEnd3, -0.30f, 0f)
-            .addPulseShakeEvent(shakeStep4, shakeEnd4, -0.30f, 0f)
+            .addPulseShakeEvent(shakeStep1, shakeEnd1, shakeStrength, 0f)
+            .addPulseShakeEvent(shakeStep2, shakeEnd2, shakeStrength, 0f)
+            .addPulseShakeEvent(shakeStep3, shakeEnd3, shakeStrength, 0f)
+            .addPulseShakeEvent(shakeStep4, shakeEnd4, shakeStrength, 0f)
+            .addPulseShakeEvent(shakeStep5, shakeEnd5, shakeStrength, 0f)
+            .addPulseShakeEvent(shakeStep6, shakeEnd6, shakeStrength, 0f)
+            .addPulseShakeEvent(shakeStep7, shakeEnd7, shakeStrength, 0f)
+//            .addPulseShakeEvent(shakeVertically1, shakeEndVertically1,  0f, shakeStrength)
+//            .addPulseShakeEvent(shakeVertically2, shakeEndVertically2,  0f, shakeStrength)
+            .clearBlackFadeEvents()
+            .addBlackFadeEvent(loopDuration - 1000, loopDuration, 0f, 1f, GlMosaicShiftCascadeFilter5.EASE_SMOOTH);
+
+        val timeScaleTarget = 0.5
+
+        val loopTimeScaleFilter = LoopTimeScaleFilter()
+            .addRange(3000, 4000, timeScaleTarget)
+            .addRange(shakeEnd5.toLong(), 8000, timeScaleTarget)
+            .setLoopDurationMs(loopDuration.toLong())
 
         val filterGroup = GlFilterGroup(
             GlFilterPeriod(0, Long.MAX_VALUE, shiftMosaicFilter),
+            GlFilterPeriod(0, Long.MAX_VALUE, loopTimeScaleFilter),
         )
 
         val outFile = File(requireContext().externalCacheDir, "特效一test_${System.currentTimeMillis()}.mp4")

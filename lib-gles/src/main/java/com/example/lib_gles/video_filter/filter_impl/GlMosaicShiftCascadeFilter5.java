@@ -23,7 +23,7 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
     public static final int SHAKE_MODE_OSCILLATE = 1;
 
     private static final String FRAGMENT_SHADER = ""
-            + "precision mediump float;\n"
+            + "precision highp float;\n"
             + "varying highp vec2 textureCoordinate;\n"
             + "uniform lowp sampler2D sTexture;\n"
             + "uniform vec2 uResolution;\n"
@@ -35,32 +35,61 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
             + "uniform float uSampleMix;\n"
             + "uniform float uSmearStrength;\n"
             + "uniform float uSoftBlurStrength;\n"
+            + "uniform float uMosaicMaxBlockSize;\n"
+            + "uniform float uCrystalThreshold;\n"
+            + "uniform float uCrystalSoftness;\n"
+            + "uniform float uCrystalSizeScale;\n"
+            + "uniform float uCrystalEdgeBoost;\n"
+            + "uniform float uBlackFade;\n"
             + "\n"
-            + "vec2 hash22(vec2 p) {\n"
-            + "    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));\n"
-            + "    p3 += dot(p3, p3.yzx + 33.33);\n"
-            + "    return fract((p3.xx + p3.yz) * p3.zy);\n"
+            + "vec2 coarseSampleUv(vec2 uv, float samplePx, float sampleMix) {\n"
+            + "    float s = max(1.0, samplePx);\n"
+            + "    vec2 px = uv * uResolution;\n"
+            + "    vec2 q = floor(px / s) * s + vec2(s * 0.5);\n"
+            + "    vec2 coarse = clamp(q / uResolution, 0.0, 1.0);\n"
+            + "    return mix(uv, coarse, clamp(sampleMix, 0.0, 1.0));\n"
             + "}\n"
             + "\n"
-            + "vec2 voronoiSampleUv(vec2 uv, float cellSize) {\n"
-            + "    vec2 cellCount = max(vec2(1.0), uResolution / max(cellSize, 1.0));\n"
-            + "    vec2 p = uv * cellCount;\n"
-            + "    vec2 baseCell = floor(p);\n"
-            + "    float bestDist = 1e9;\n"
-            + "    vec2 bestPoint = p;\n"
-            + "    for (int j = -1; j <= 1; ++j) {\n"
-            + "        for (int i = -1; i <= 1; ++i) {\n"
-            + "            vec2 neighbor = baseCell + vec2(float(i), float(j));\n"
-            + "            vec2 jitter = hash22(neighbor) - 0.5;\n"
-            + "            vec2 point = neighbor + 0.5 + jitter * 0.9;\n"
-            + "            float d = dot(point - p, point - p);\n"
-            + "            if (d < bestDist) {\n"
-            + "                bestDist = d;\n"
-            + "                bestPoint = point;\n"
-            + "            }\n"
-            + "        }\n"
-            + "    }\n"
-            + "    return clamp(bestPoint / cellCount, 0.0, 1.0);\n"
+            + "vec3 sampledColor(vec2 uv, float samplePx, float sampleMix) {\n"
+            + "    return texture2D(sTexture, coarseSampleUv(clamp(uv, 0.0, 1.0), samplePx, sampleMix)).rgb;\n"
+            + "}\n"
+            + "\n"
+            + "vec3 blurFromSampled(vec2 uv, vec2 texel, float radiusPx, float samplePx, float sampleMix) {\n"
+            + "    vec2 o = texel * max(0.0, radiusPx);\n"
+            + "    vec3 c = vec3(0.0);\n"
+            + "    c += sampledColor(uv, samplePx, sampleMix) * 0.24;\n"
+            + "    c += sampledColor(uv + vec2( o.x, 0.0), samplePx, sampleMix) * 0.12;\n"
+            + "    c += sampledColor(uv + vec2(-o.x, 0.0), samplePx, sampleMix) * 0.12;\n"
+            + "    c += sampledColor(uv + vec2(0.0,  o.y), samplePx, sampleMix) * 0.12;\n"
+            + "    c += sampledColor(uv + vec2(0.0, -o.y), samplePx, sampleMix) * 0.12;\n"
+            + "    c += sampledColor(uv + vec2( o.x,  o.y), samplePx, sampleMix) * 0.07;\n"
+            + "    c += sampledColor(uv + vec2(-o.x,  o.y), samplePx, sampleMix) * 0.07;\n"
+            + "    c += sampledColor(uv + vec2( o.x, -o.y), samplePx, sampleMix) * 0.07;\n"
+            + "    c += sampledColor(uv + vec2(-o.x, -o.y), samplePx, sampleMix) * 0.07;\n"
+            + "    return c;\n"
+            + "}\n"
+            + "\n"
+            + "vec2 diamondCenterUv(vec2 uv, float cellSizePx) {\n"
+            + "    vec2 px = uv * uResolution;\n"
+            + "    float s = 0.70710678;\n"
+            + "    mat2 rot = mat2(s, -s, s, s);\n"
+            + "    mat2 invRot = mat2(s, s, -s, s);\n"
+            + "    float cell = max(1.0, cellSizePx);\n"
+            + "    vec2 r = rot * px;\n"
+            + "    vec2 q = floor(r / cell) * cell + vec2(cell * 0.5);\n"
+            + "    vec2 outPx = invRot * q;\n"
+            + "    return clamp(outPx / uResolution, 0.0, 1.0);\n"
+            + "}\n"
+            + "\n"
+            + "float diamondEdgeFactor(vec2 uv, float cellSizePx) {\n"
+            + "    vec2 px = uv * uResolution;\n"
+            + "    float s = 0.70710678;\n"
+            + "    mat2 rot = mat2(s, -s, s, s);\n"
+            + "    float cell = max(1.0, cellSizePx);\n"
+            + "    vec2 r = rot * px;\n"
+            + "    vec2 local = fract(r / cell) - vec2(0.5);\n"
+            + "    float d = abs(local.x) + abs(local.y);\n"
+            + "    return smoothstep(0.78, 1.0, d);\n"
             + "}\n"
             + "void main() {\n"
             + "    vec2 scale = max(uScale, vec2(1.0));\n"
@@ -77,15 +106,59 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
             + "        sampledUv = mix(stretchedUv, coarseUv, clamp(uSampleMix, 0.0, 1.0));\n"
             + "    }\n"
             + "\n"
+            + "    vec2 texel = vec2(1.0) / uResolution;\n"
             + "    vec4 base;\n"
             + "    if (uBlockSize <= 1.0) {\n"
-            + "        base = texture2D(sTexture, sampledUv);\n"
+            + "        float preSamplePx = max(1.0, uSampleScale);\n"
+            + "        float preSampleMix = clamp(uSampleMix, 0.0, 1.0);\n"
+            + "        base = vec4(sampledColor(stretchedUv, preSamplePx, preSampleMix), 1.0);\n"
             + "    } else {\n"
-            + "        vec2 uv = voronoiSampleUv(sampledUv, uBlockSize);\n"
-            + "        base = texture2D(sTexture, uv);\n"
+            + "        // Level-driven full-frame pre-sample + blur.\n"
+            + "        float level = clamp((uBlockSize - 1.0) / max(1.0, uMosaicMaxBlockSize - 1.0), 0.0, 1.0);\n"
+            + "        float preSamplePx = mix(1.2, 7.0, level);\n"
+            + "        float preSampleMix = mix(0.08, 0.62, level);\n"
+            + "        float preBlurPx = mix(0.7, 6.2, level);\n"
+            + "        vec2 preUv = coarseSampleUv(stretchedUv, preSamplePx, preSampleMix);\n"
+            + "        vec3 preFrame = blurFromSampled(preUv, texel, preBlurPx, preSamplePx, preSampleMix);\n"
+            + "\n"
+            + "        // Crystallization runs on top of sampled+blurred basis.\n"
+            + "        float cellSize = max(1.0, uBlockSize * max(1.0, uCrystalSizeScale));\n"
+            + "        vec2 dUv = diamondCenterUv(stretchedUv, cellSize);\n"
+            + "        vec3 crystal = blurFromSampled(dUv, texel, preBlurPx * 0.85, preSamplePx, preSampleMix);\n"
+            + "        float edge = diamondEdgeFactor(stretchedUv, cellSize);\n"
+            + "        crystal = mix(crystal, crystal * 1.14 + vec3(0.05), edge * 0.56);\n"
+            + "\n"
+            + "        // Crystal edge emphasis: sharpen + bright rim\n"
+            + "        float eBoost = clamp(uCrystalEdgeBoost, 0.0, 2.0);\n"
+            + "        vec2 eStep = vec2(cellSize / max(uResolution.x, 1.0), cellSize / max(uResolution.y, 1.0)) * 0.10;\n"
+            + "        vec3 cL = blurFromSampled(clamp(dUv - vec2(eStep.x, 0.0), 0.0, 1.0), texel, preBlurPx * 0.82, preSamplePx, preSampleMix);\n"
+            + "        vec3 cR = blurFromSampled(clamp(dUv + vec2(eStep.x, 0.0), 0.0, 1.0), texel, preBlurPx * 0.82, preSamplePx, preSampleMix);\n"
+            + "        vec3 cU = blurFromSampled(clamp(dUv - vec2(0.0, eStep.y), 0.0, 1.0), texel, preBlurPx * 0.82, preSamplePx, preSampleMix);\n"
+            + "        vec3 cD = blurFromSampled(clamp(dUv + vec2(0.0, eStep.y), 0.0, 1.0), texel, preBlurPx * 0.82, preSamplePx, preSampleMix);\n"
+            + "        vec3 lap = (crystal * 4.0 - cL - cR - cU - cD);\n"
+            + "        float lapLum = max(0.0, dot(abs(lap), vec3(0.299, 0.587, 0.114)) - 0.015);\n"
+            + "        float rim = edge * smoothstep(0.02, 0.24, lapLum);\n"
+            + "        crystal += lap * (0.28 * eBoost);\n"
+            + "        crystal += vec3(1.0) * (rim * 0.22 * eBoost);\n"
+            + "        crystal = clamp(crystal, 0.0, 1.0);\n"
+            + "\n"
+            + "        // Stable highlight mask in crystal space: center-based + 4-neighbor dilation.\n"
+            + "        float soft = max(0.001, uCrystalSoftness);\n"
+            + "        float stepUv = cellSize / max(min(uResolution.x, uResolution.y), 1.0);\n"
+            + "        vec2 du = vec2(stepUv, 0.0);\n"
+            + "        vec2 dv = vec2(0.0, stepUv);\n"
+            + "        float r = max(0.6, preBlurPx * 0.9);\n"
+            + "        float l0 = dot(blurFromSampled(dUv, texel, r, preSamplePx, preSampleMix), vec3(0.299, 0.587, 0.114));\n"
+            + "        float l1 = dot(blurFromSampled(clamp(dUv + du, 0.0, 1.0), texel, r, preSamplePx, preSampleMix), vec3(0.299, 0.587, 0.114));\n"
+            + "        float l2 = dot(blurFromSampled(clamp(dUv - du, 0.0, 1.0), texel, r, preSamplePx, preSampleMix), vec3(0.299, 0.587, 0.114));\n"
+            + "        float l3 = dot(blurFromSampled(clamp(dUv + dv, 0.0, 1.0), texel, r, preSamplePx, preSampleMix), vec3(0.299, 0.587, 0.114));\n"
+            + "        float l4 = dot(blurFromSampled(clamp(dUv - dv, 0.0, 1.0), texel, r, preSamplePx, preSampleMix), vec3(0.299, 0.587, 0.114));\n"
+            + "        float lum = max(l0, max(max(l1, l2), max(l3, l4)));\n"
+            + "        float hiMask = smoothstep(uCrystalThreshold - soft, uCrystalThreshold + soft, lum);\n"
+            + "        vec3 mixed = mix(preFrame, crystal, hiMask);\n"
+            + "        base = vec4(mixed, 1.0);\n"
             + "    }\n"
             + "\n"
-            + "    vec2 texel = vec2(1.0) / uResolution;\n"
             + "    vec2 smearStep = vec2(texel.x * uSmearStrength * 34.0, 0.0);\n"
             + "    vec4 smear = vec4(0.0);\n"
             + "    smear += texture2D(sTexture, clamp(sampledUv + smearStep * -4.0, 0.0, 1.0)) * 0.08;\n"
@@ -123,7 +196,8 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
             + "\n"
             + "    vec3 color = mix(base.rgb, smear.rgb, clamp(uSmearStrength * 0.45, 0.0, 1.0));\n"
             + "    color = mix(color, soft.rgb, clamp(uSoftBlurStrength * 6.2, 0.0, 1.0));\n"
-            + "    gl_FragColor = vec4(color, base.a);\n"
+            + "    color = mix(color, vec3(0.0), clamp(uBlackFade, 0.0, 1.0));\n"
+            + "    gl_FragColor = vec4(color, 1.0);\n"
             + "}\n";
 
     private int resolutionHandle = -1;
@@ -135,6 +209,12 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
     private int sampleMixHandle = -1;
     private int smearStrengthHandle = -1;
     private int softBlurStrengthHandle = -1;
+    private int mosaicMaxBlockSizeHandle = -1;
+    private int crystalThresholdHandle = -1;
+    private int crystalSoftnessHandle = -1;
+    private int crystalSizeScaleHandle = -1;
+    private int crystalEdgeBoostHandle = -1;
+    private int blackFadeHandle = -1;
 
     private float firstPresentationMs = -1f;
     private float mosaicMaxBlockSize = 40f;
@@ -146,10 +226,17 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
     private float maxShakeSampleMix = 0.68f;
     private float maxShakeSmearStrength = 0.85f;
     private float maxShakeSoftBlurStrength = 0.065f;
+    private boolean loopEnabled = true;
+    private float loopDurationMs = -1f; // <=0 means auto from timeline config
+    private float crystalThreshold = 0.80f;
+    private float crystalSoftness = 0.07f;
+    private float crystalSizeScale = 1.8f;
+    private float crystalEdgeBoost = 1.0f;
 
     private final List<MosaicKeyframe> mosaicKeyframes = new ArrayList<>();
     private final List<ZoomEvent> zoomEvents = new ArrayList<>();
     private final List<ShakeEvent> shakeEvents = new ArrayList<>();
+    private final List<BlackFadeEvent> blackFadeEvents = new ArrayList<>();
 
     public GlMosaicShiftCascadeFilter5() {
         super(VERTEX_SHADER, FRAGMENT_SHADER);
@@ -167,6 +254,12 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
         sampleMixHandle = GLES20.glGetUniformLocation(mProgramHandle, "uSampleMix");
         smearStrengthHandle = GLES20.glGetUniformLocation(mProgramHandle, "uSmearStrength");
         softBlurStrengthHandle = GLES20.glGetUniformLocation(mProgramHandle, "uSoftBlurStrength");
+        mosaicMaxBlockSizeHandle = GLES20.glGetUniformLocation(mProgramHandle, "uMosaicMaxBlockSize");
+        crystalThresholdHandle = GLES20.glGetUniformLocation(mProgramHandle, "uCrystalThreshold");
+        crystalSoftnessHandle = GLES20.glGetUniformLocation(mProgramHandle, "uCrystalSoftness");
+        crystalSizeScaleHandle = GLES20.glGetUniformLocation(mProgramHandle, "uCrystalSizeScale");
+        crystalEdgeBoostHandle = GLES20.glGetUniformLocation(mProgramHandle, "uCrystalEdgeBoost");
+        blackFadeHandle = GLES20.glGetUniformLocation(mProgramHandle, "uBlackFade");
     }
 
     @Override
@@ -179,14 +272,16 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
             firstPresentationMs = nowMs;
         }
         float tMs = Math.max(0f, nowMs - firstPresentationMs);
+        float loopedMs = resolveLoopedTimeMs(tMs);
 
-        float zoomScale = resolveZoomScale(tMs);
-        float shiftX = resolveShakeX(tMs);
-        float shiftY = resolveShakeY(tMs);
-        float shakeStrength = resolveShakeStrength(tMs);
+        float zoomScale = resolveZoomScale(loopedMs);
+        float shiftX = resolveShakeX(loopedMs);
+        float shiftY = resolveShakeY(loopedMs);
+        float shakeStrength = resolveShakeStrength(loopedMs);
+        float blackFade = resolveBlackFade(loopedMs);
         boolean shaking = Math.abs(shiftX) > 1e-5f || Math.abs(shiftY) > 1e-5f;
 
-        float blockSize = shaking ? 0f : resolveMosaic(tMs);
+        float blockSize = shaking ? 0f : resolveMosaic(loopedMs);
         float scaleX = zoomScale;
         float scaleY = zoomScale;
         float stretchX = 1.0f;
@@ -197,20 +292,34 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
         float softBlurStrength = 0f;
 
         if (shaking) {
-            float shakeScaleX = Math.max(1.0f, computeShakeScaleForOffset(shiftX));
-            float shakeScaleY = Math.max(1.0f, computeShakeScaleForOffset(shiftY));
-            scaleX = Math.max(zoomScale, lerp(1.0f, shakeScaleX, shakeStrength));
-            scaleY = Math.max(zoomScale, lerp(1.0f, shakeScaleY, shakeStrength));
+            // HitShake-like: scale is driven by impact energy first,
+            // and extended only when needed to keep translated frame safe.
+            float punch = (float) Math.pow(clamp01(shakeStrength), 0.42f);
+            float energyScale = lerp(1.0f, maxShakeScale, punch);
+            float requiredScaleX = Math.max(1.0f, computeShakeScaleForOffset(shiftX));
+            float requiredScaleY = Math.max(1.0f, computeShakeScaleForOffset(shiftY));
+            float shakeScaleX = Math.max(energyScale, requiredScaleX);
+            float shakeScaleY = Math.max(energyScale, requiredScaleY);
+            scaleX = Math.max(zoomScale, zoomScale * shakeScaleX);
+            scaleY = Math.max(zoomScale, zoomScale * shakeScaleY);
+
             float maxOffsetX = computeMaxOffsetForScale(scaleX);
             float maxOffsetY = computeMaxOffsetForScale(scaleY);
-            shiftX = clamp(shiftX, -maxOffsetX, maxOffsetX);
-            shiftY = clamp(shiftY, -maxOffsetY, maxOffsetY);
-            stretchX = lerp(1.0f, maxShakeStretchX, shakeStrength);
-            stretchY = lerp(1.0f, maxShakeStretchY, shakeStrength);
-            sampleScale = lerp(1.0f, maxShakeSampleScale, shakeStrength);
-            sampleMix = lerp(0.0f, maxShakeSampleMix, shakeStrength);
-            smearStrength = lerp(0.0f, maxShakeSmearStrength, shakeStrength);
-            softBlurStrength = lerp(0.0f, maxShakeSoftBlurStrength, shakeStrength);
+            shiftX = clamp(shiftX, -maxOffsetX * 0.995f, maxOffsetX * 0.995f);
+            shiftY = clamp(shiftY, -maxOffsetY * 0.995f, maxOffsetY * 0.995f);
+
+            // Stretch/blur follow impact energy and movement amount.
+            float motionX = clamp01(Math.abs(shiftX) / 0.12f);
+            float motionY = clamp01(Math.abs(shiftY) / 0.12f);
+            float stretchFx = clamp01(punch * 0.70f + motionX * 0.45f);
+            float stretchFy = clamp01(punch * 0.45f + motionY * 0.40f);
+            stretchX = lerp(1.0f, maxShakeStretchX, stretchFx);
+            stretchY = lerp(1.0f, maxShakeStretchY, stretchFy);
+
+            sampleScale = lerp(1.0f, maxShakeSampleScale, clamp01(punch * 0.92f));
+            sampleMix = lerp(0.0f, maxShakeSampleMix, clamp01(punch * 0.88f));
+            smearStrength = lerp(0.0f, maxShakeSmearStrength, clamp01(punch * 0.95f));
+            softBlurStrength = lerp(0.0f, maxShakeSoftBlurStrength, clamp01(punch));
         }
 
         GLES20.glUniform2f(resolutionHandle, mWidth, mHeight);
@@ -222,6 +331,12 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
         GLES20.glUniform1f(sampleMixHandle, clamp(sampleMix, 0.0f, 1.0f));
         GLES20.glUniform1f(smearStrengthHandle, Math.max(0f, smearStrength));
         GLES20.glUniform1f(softBlurStrengthHandle, clamp(softBlurStrength, 0.0f, 0.12f));
+        GLES20.glUniform1f(mosaicMaxBlockSizeHandle, Math.max(1f, mosaicMaxBlockSize));
+        GLES20.glUniform1f(crystalThresholdHandle, clamp(crystalThreshold, 0.0f, 1.0f));
+        GLES20.glUniform1f(crystalSoftnessHandle, clamp(crystalSoftness, 0.001f, 0.5f));
+        GLES20.glUniform1f(crystalSizeScaleHandle, Math.max(1.0f, crystalSizeScale));
+        GLES20.glUniform1f(crystalEdgeBoostHandle, clamp(crystalEdgeBoost, 0.0f, 2.0f));
+        GLES20.glUniform1f(blackFadeHandle, clamp(blackFade, 0.0f, 1.0f));
     }
 
     @Override
@@ -329,6 +444,67 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
         return this;
     }
 
+    public GlMosaicShiftCascadeFilter5 setLoopEnabled(boolean loopEnabled) {
+        this.loopEnabled = loopEnabled;
+        return this;
+    }
+
+    /**
+     * Set cycle duration for looping all effects.
+     * <=0 means auto duration (max end time among configured effects).
+     */
+    public GlMosaicShiftCascadeFilter5 setLoopDurationMs(float loopDurationMs) {
+        this.loopDurationMs = loopDurationMs;
+        return this;
+    }
+
+    public GlMosaicShiftCascadeFilter5 setCrystalThreshold(float crystalThreshold) {
+        this.crystalThreshold = clamp(crystalThreshold, 0.0f, 1.0f);
+        return this;
+    }
+
+    public GlMosaicShiftCascadeFilter5 setCrystalSoftness(float crystalSoftness) {
+        this.crystalSoftness = clamp(crystalSoftness, 0.001f, 0.5f);
+        return this;
+    }
+
+    public GlMosaicShiftCascadeFilter5 setCrystalSizeScale(float crystalSizeScale) {
+        this.crystalSizeScale = Math.max(1.0f, crystalSizeScale);
+        return this;
+    }
+
+    public GlMosaicShiftCascadeFilter5 setCrystalEdgeBoost(float crystalEdgeBoost) {
+        this.crystalEdgeBoost = clamp(crystalEdgeBoost, 0.0f, 2.0f);
+        return this;
+    }
+
+    public GlMosaicShiftCascadeFilter5 clearBlackFadeEvents() {
+        blackFadeEvents.clear();
+        return this;
+    }
+
+    /**
+     * Add a fade-to-black event. from/to are [0..1].
+     */
+    public GlMosaicShiftCascadeFilter5 addBlackFadeEvent(float startMs, float endMs, float from, float to, int ease) {
+        float s = Math.max(0f, startMs);
+        float e = Math.max(s + 1f, endMs);
+        blackFadeEvents.add(new BlackFadeEvent(s, e, clamp01(from), clamp01(to), ease));
+        return this;
+    }
+
+    private float resolveBlackFade(float tMs) {
+        float out = 0f;
+        for (BlackFadeEvent event : blackFadeEvents) {
+            if (tMs < event.startMs || tMs >= event.endMs) {
+                continue;
+            }
+            float p = applyEase(normProgress(tMs, event.startMs, event.endMs), event.ease);
+            out = Math.max(out, lerp(event.from, event.to, p));
+        }
+        return clamp01(out);
+    }
+
     private float resolveMosaic(float tMs) {
         if (mosaicKeyframes.isEmpty()) {
             return 0f;
@@ -381,7 +557,7 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
     private float resolveShakeStrength(float tMs) {
         float out = 0f;
         for (ShakeEvent event : shakeEvents) {
-            out = Math.max(out, sampleShakeFactor(event, tMs));
+            out = Math.max(out, sampleShakeStrengthFactor(event, tMs));
         }
         return clamp01(out);
     }
@@ -394,16 +570,34 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
         if (Math.abs(amp) < 1e-7f) {
             return 0f;
         }
-        return amp * sampleShakeFactor(event, tMs);
+        return amp * sampleShakeDisplacementFactor(event, tMs);
     }
 
-    private static float sampleShakeFactor(ShakeEvent event, float tMs) {
+    /**
+     * Displacement curve:
+     * - pulse: HitShake style (fast push, then slight pull-back)
+     * - oscillate: periodic punch envelope per cycle
+     */
+    private static float sampleShakeDisplacementFactor(ShakeEvent event, float tMs) {
         float p = normProgress(tMs, event.startMs, event.endMs);
         if (event.mode == SHAKE_MODE_OSCILLATE) {
             float cycleProgress = clamp01((p * Math.max(1, event.cycles)) % 1.0f);
-            return 1.0f - applyEaseOut(cycleProgress);
+            return snappyDisplacement(cycleProgress);
         }
-        return 1.0f - applyEaseOut(p);
+        return snappyDisplacement(p);
+    }
+
+    /**
+     * Energy curve used by scale/stretch/blur.
+     * Keep non-negative to avoid flicker when displacement enters rebound phase.
+     */
+    private static float sampleShakeStrengthFactor(ShakeEvent event, float tMs) {
+        float p = normProgress(tMs, event.startMs, event.endMs);
+        if (event.mode == SHAKE_MODE_OSCILLATE) {
+            float cycleProgress = clamp01((p * Math.max(1, event.cycles)) % 1.0f);
+            return snappyStrength(cycleProgress);
+        }
+        return snappyStrength(p);
     }
 
     private static float normProgress(float t, float start, float end) {
@@ -419,10 +613,76 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
         return p;
     }
 
-    private static float applyEaseOut(float t) {
+    private static float easeOutBack(float t) {
         float p = clamp01(t);
-        float inv = 1.0f - p;
-        return 1.0f - inv * inv * inv;
+        float c1 = 1.70158f;
+        float c3 = c1 + 1.0f;
+        float q = p - 1.0f;
+        return 1.0f + c3 * q * q * q + c1 * q * q;
+    }
+
+    /**
+     * Same profile as HitShakeFilter:
+     * 0~40%: rapid rise
+     * 40~100%: rebound/recover
+     */
+    private static float hitShakeImpactCurve(float p) {
+        float t = clamp01(p);
+        if (t < 0.4f) {
+            return (float) Math.pow(t / 0.4f, 0.5f);
+        }
+        float tt = (t - 0.4f) / 0.6f;
+        return easeOutBack(1.0f - tt);
+    }
+
+    /**
+     * Displacement with a slight reverse pull in the tail,
+     * so motion looks like "push out then pull back".
+     */
+    private static float hitShakeShiftCurve(float p) {
+        float t = clamp01(p);
+        float impact = hitShakeImpactCurve(t);
+        float shift = impact;
+        if (t > 0.6f) {
+            float rb = (t - 0.6f) / 0.4f;
+            shift -= clamp01(rb) * 0.25f;
+        }
+        return shift;
+    }
+
+    /**
+     * Compress effect to the front part of each shake window:
+     * fast hit, quick pull-back, minimal trailing tail.
+     */
+    private static float snappyDisplacement(float p) {
+        float t = clamp01(p);
+        final float activeEnd = 0.68f;
+        if (t >= activeEnd) {
+            return 0f;
+        }
+        float tp = t / activeEnd;
+        return hitShakeShiftCurve(tp);
+    }
+
+    /**
+     * Energy also uses compressed window + faster release,
+     * so blur/stretch won't feel拖沓.
+     */
+    private static float snappyStrength(float p) {
+        float t = clamp01(p);
+        final float activeEnd = 0.68f;
+        if (t >= activeEnd) {
+            return 0f;
+        }
+        float tp = t / activeEnd;
+        float impact = hitShakeImpactCurve(tp);
+        float release = 1.0f - smoothStep(0.52f, 1.0f, tp);
+        return impact * release;
+    }
+
+    private static float smoothStep(float e0, float e1, float x) {
+        float t = clamp01((x - e0) / Math.max(1e-6f, e1 - e0));
+        return t * t * (3f - 2f * t);
     }
 
     private float computeShakeScaleForOffset(float offset) {
@@ -446,6 +706,35 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
                 return Float.compare(a.timeMs, b.timeMs);
             }
         });
+    }
+
+    private float resolveLoopedTimeMs(float tMs) {
+        if (!loopEnabled) {
+            return tMs;
+        }
+        float cycle = loopDurationMs > 0f ? loopDurationMs : computeAutoLoopDurationMs();
+        if (cycle <= 1f) {
+            return tMs;
+        }
+        float m = tMs % cycle;
+        return m < 0f ? (m + cycle) : m;
+    }
+
+    private float computeAutoLoopDurationMs() {
+        float maxEnd = 0f;
+        for (MosaicKeyframe k : mosaicKeyframes) {
+            maxEnd = Math.max(maxEnd, k.timeMs);
+        }
+        for (ZoomEvent e : zoomEvents) {
+            maxEnd = Math.max(maxEnd, e.endMs);
+        }
+        for (ShakeEvent e : shakeEvents) {
+            maxEnd = Math.max(maxEnd, e.endMs);
+        }
+        for (BlackFadeEvent e : blackFadeEvents) {
+            maxEnd = Math.max(maxEnd, e.endMs);
+        }
+        return Math.max(1f, maxEnd);
     }
 
     private static float clamp01(float v) {
@@ -501,6 +790,22 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
             this.ampY = ampY;
             this.mode = mode;
             this.cycles = cycles;
+        }
+    }
+
+    private static class BlackFadeEvent {
+        final float startMs;
+        final float endMs;
+        final float from;
+        final float to;
+        final int ease;
+
+        BlackFadeEvent(float startMs, float endMs, float from, float to, int ease) {
+            this.startMs = startMs;
+            this.endMs = endMs;
+            this.from = from;
+            this.to = to;
+            this.ease = ease;
         }
     }
 }
