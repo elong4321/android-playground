@@ -102,7 +102,6 @@ public class MultiHeartPopFlashFilter extends GlFilter {
 
     private long firstPresentationUs = Long.MIN_VALUE;
     private long startTimeMs = -1L;
-    private long lastLayoutCycle = Long.MIN_VALUE;
     // 1_000 for microseconds->ms, 1_000_000 for nanoseconds->ms.
     private float timelineToMsDivisor = 1000f;
     private boolean useWallClockFallback = true;
@@ -149,6 +148,7 @@ public class MultiHeartPopFlashFilter extends GlFilter {
     private final float[] centersY = new float[MAX_HEARTS];
     private final float[] delayMs = new float[MAX_HEARTS];
     private final float[] scaleMul = new float[MAX_HEARTS];
+    private final long[] heartCycleIndex = new long[MAX_HEARTS];
 
     private final float[] origins = new float[MAX_HEARTS * 2];
     private final float[] sizes = new float[MAX_HEARTS * 2];
@@ -218,20 +218,20 @@ public class MultiHeartPopFlashFilter extends GlFilter {
             }
         }
 
-        // Refresh layout each round so hearts do not repeat fixed positions forever.
-        float cycleLenForLayout = Math.max(1f, repeatIntervalMs);
-        long layoutCycle = (long) Math.floor(elapsedMs / cycleLenForLayout);
-        if (layoutCycle != lastLayoutCycle) {
-            regenerateLayout();
-            lastLayoutCycle = layoutCycle;
-        }
-
         float scaleCap = computeSafeScaleCap();
         int heartCount = Math.min(MAX_HEARTS, Math.max(1, heartsPerQuadrant * 4));
 
         for (int i = 0; i < heartCount; i++) {
             float cycleLen = Math.max(1f, repeatIntervalMs);
-            float localElapsed = (elapsedMs - delayMs[i]) % cycleLen;
+            float heartElapsed = elapsedMs - delayMs[i];
+            long cycleIndex = heartElapsed >= 0f ? (long) Math.floor(heartElapsed / cycleLen) : -1L;
+            if (cycleIndex >= 0L && cycleIndex != heartCycleIndex[i]) {
+                randomizeHeartSlot(i, heartCount);
+                heartCycleIndex[i] = cycleIndex;
+                // Use refreshed params for current frame's phase computation.
+                heartElapsed = elapsedMs - delayMs[i];
+            }
+            float localElapsed = heartElapsed % cycleLen;
             if (localElapsed < 0f) {
                 localElapsed += cycleLen;
             }
@@ -316,8 +316,10 @@ public class MultiHeartPopFlashFilter extends GlFilter {
     public void setup() {
         firstPresentationUs = Long.MIN_VALUE;
         startTimeMs = -1L;
-        lastLayoutCycle = Long.MIN_VALUE;
         timelineToMsDivisor = 1000f;
+        for (int i = 0; i < MAX_HEARTS; i++) {
+            heartCycleIndex[i] = Long.MIN_VALUE;
+        }
         super.setup();
     }
 
@@ -333,8 +335,10 @@ public class MultiHeartPopFlashFilter extends GlFilter {
         }
         firstPresentationUs = Long.MIN_VALUE;
         startTimeMs = -1L;
-        lastLayoutCycle = Long.MIN_VALUE;
         timelineToMsDivisor = 1000f;
+        for (int i = 0; i < MAX_HEARTS; i++) {
+            heartCycleIndex[i] = Long.MIN_VALUE;
+        }
         super.release();
     }
 
@@ -385,8 +389,70 @@ public class MultiHeartPopFlashFilter extends GlFilter {
                 float t = clamp(baseT + jitter, 0f, 1f);
                 delayMs[idx] = t * maxStaggerMs;
                 scaleMul[idx] = lerp(initialScaleMin, initialScaleMax, random.nextFloat());
+                heartCycleIndex[idx] = Long.MIN_VALUE;
             }
         }
+    }
+
+    private void randomizeHeartSlot(int index, int totalHearts) {
+        if (index < 0 || index >= MAX_HEARTS) {
+            return;
+        }
+        int q = quadrantForIndex(index, totalHearts);
+        float minX = (q % 2 == 0) ? centerPadding : 0.5f + centerPadding;
+        float maxX = (q % 2 == 0) ? 0.5f - centerPadding : 1.0f - centerPadding;
+        float minY = (q < 2) ? 0.5f + centerPadding : centerPadding;
+        float maxY = (q < 2) ? 1.0f - centerPadding : 0.5f - centerPadding;
+
+        boolean placed = false;
+        for (int attempt = 0; attempt < 24 && !placed; attempt++) {
+            float cx = lerp(minX, maxX, random.nextFloat());
+            float cy = lerp(minY, maxY, random.nextFloat());
+            if (isFarEnoughForIndex(cx, cy, index, totalHearts)) {
+                centersX[index] = cx;
+                centersY[index] = cy;
+                placed = true;
+            }
+        }
+        if (!placed) {
+            centersX[index] = lerp(minX, maxX, 0.5f + (random.nextFloat() - 0.5f) * 0.4f);
+            centersY[index] = lerp(minY, maxY, 0.5f + (random.nextFloat() - 0.5f) * 0.4f);
+        }
+
+        // Keep stagger stable to avoid global sync while still allowing slight evolution.
+        float baseT = (totalHearts <= 1) ? 0f : (index / (float) (totalHearts - 1));
+        float jitter = (random.nextFloat() - 0.5f) * (1.0f / Math.max(1f, totalHearts));
+        float t = clamp(baseT + jitter, 0f, 1f);
+        delayMs[index] = t * maxStaggerMs;
+        scaleMul[index] = lerp(initialScaleMin, initialScaleMax, random.nextFloat());
+    }
+
+    private boolean isFarEnoughForIndex(float x, float y, int targetIndex, int totalHearts) {
+        float minDist2 = minHeartSpacing * minHeartSpacing;
+        for (int i = 0; i < totalHearts; i++) {
+            if (i == targetIndex) {
+                continue;
+            }
+            float dx = centersX[i] - x;
+            float dy = centersY[i] - y;
+            if (dx * dx + dy * dy < minDist2) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private int quadrantForIndex(int index, int totalHearts) {
+        int perQuad = Math.max(1, heartsPerQuadrant);
+        int q = index / perQuad;
+        if (q < 0) {
+            return 0;
+        }
+        if (q > 3) {
+            // If not divisible by 4, keep overflow in last quadrant.
+            return 3;
+        }
+        return q;
     }
 
     private boolean isFarEnough(float x, float y, int countSoFar) {
