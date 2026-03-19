@@ -624,6 +624,7 @@ class MediaEditFragment: BaseSupportFragment() {
     .setGlowWidth(0.06f)
     .setGlowIntensity(1.0f);
 
+        val heartBlowColor = 0.7f
         val heartFilter = MultiHeartPopFlashFilter(context, "heart.png")
             .setInitialScaleRange(0.2f, 0.4f)
             .setMaxScaleMultiplier(1.2f)
@@ -631,6 +632,10 @@ class MediaEditFragment: BaseSupportFragment() {
             .setFlashShrinkDurationMs(350f)
             .setMaxStaggerMs(1200f)
             .setRepeatIntervalMs(2000f)
+            .setGlowStrength(1.2f)
+            .setGlowRadius(4.5f)
+            .setGlowSoftness(0.85f)
+            .setGlowColor(heartBlowColor, heartBlowColor, heartBlowColor)
 
         val filterGroup = GlFilterGroup(
             GlFilterPeriod(0,Long.MAX_VALUE, snow),

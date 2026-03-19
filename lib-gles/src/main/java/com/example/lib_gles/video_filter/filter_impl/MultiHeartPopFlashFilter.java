@@ -32,6 +32,12 @@ public class MultiHeartPopFlashFilter extends GlFilter {
             + "uniform vec2 uHeartOrigin[" + MAX_HEARTS + "];\n"
             + "uniform vec2 uHeartSize[" + MAX_HEARTS + "];\n"
             + "uniform float uHeartAlpha[" + MAX_HEARTS + "];\n"
+            + "uniform vec3 uHeartGlowColor;\n"
+            + "uniform float uHeartGlowStrength;\n"
+            + "uniform float uHeartGlowRadius;\n"
+            + "uniform float uHeartGlowSoftness;\n"
+            + "uniform float uHeartGlowOpacity;\n"
+            + "uniform vec2 uViewportSize;\n"
             + "void main() {\n"
             + "    vec4 outColor = texture2D(sTexture, textureCoordinate);\n"
             + "    for (int i = 0; i < " + MAX_HEARTS + "; i++) {\n"
@@ -47,8 +53,27 @@ public class MultiHeartPopFlashFilter extends GlFilter {
             + "        float luma = dot(heart.rgb, vec3(0.299, 0.587, 0.114));\n"
             + "        float alphaMask = smoothstep(0.02, 0.15, heart.a);\n"
             + "        float brightMask = smoothstep(0.22, 0.62, luma) * 0.85;\n"
-            + "        float mask = max(alphaMask, brightMask);\n"
-            + "        float a = mask * uHeartAlpha[i] * inRect;\n"
+            + "        float coreMask = max(alphaMask, brightMask);\n"
+            + "\n"
+            + "        // Round halo in screen-space around the heart center.\n"
+            + "        vec2 hs = max(uHeartSize[i], vec2(0.0001));\n"
+            + "        vec2 c = uHeartOrigin[i] + hs * 0.5;\n"
+            + "        vec2 vp = max(uViewportSize, vec2(1.0));\n"
+            + "        vec2 deltaPx = (textureCoordinate - c) * vp;\n"
+            + "        float dPx = length(deltaPx);\n"
+            + "        float minHeartPx = min(hs.x * vp.x, hs.y * vp.y);\n"
+            + "        float softness = clamp(uHeartGlowSoftness, 0.01, 1.0);\n"
+            + "        float innerR = minHeartPx * 0.52;\n"
+            + "        float outerR = innerR + clamp(uHeartGlowRadius, 0.0, 12.0) * (6.0 + 14.0 * softness);\n"
+            + "        // Inner solid + outer soft fade.\n"
+            + "        float solidInner = 1.0 - step(innerR, dPx);\n"
+            + "        float outerFade = 1.0 - smoothstep(innerR, outerR, dPx);\n"
+            + "        float haloMask = max(solidInner, outerFade);\n"
+            + "        float haloAlpha = haloMask * uHeartAlpha[i] * clamp(uHeartGlowStrength, 0.0, 2.0)\n"
+            + "                * clamp(uHeartGlowOpacity, 0.0, 1.0);\n"
+            + "        outColor = mix(outColor, vec4(uHeartGlowColor, 1.0), clamp(haloAlpha, 0.0, 1.0));\n"
+            + "\n"
+            + "        float a = coreMask * uHeartAlpha[i] * inRect;\n"
             + "        outColor = mix(outColor, vec4(heart.rgb, 1.0), a);\n"
             + "    }\n"
             + "    gl_FragColor = outColor;\n"
@@ -68,6 +93,12 @@ public class MultiHeartPopFlashFilter extends GlFilter {
     private int heartOriginHandle = -1; // uHeartOrigin[0]
     private int heartSizeHandle = -1;   // uHeartSize[0]
     private int heartAlphaHandle = -1;  // uHeartAlpha[0]
+    private int heartGlowColorHandle = -1;
+    private int heartGlowStrengthHandle = -1;
+    private int heartGlowRadiusHandle = -1;
+    private int heartGlowSoftnessHandle = -1;
+    private int heartGlowOpacityHandle = -1;
+    private int viewportSizeHandle = -1;
 
     private long firstPresentationUs = Long.MIN_VALUE;
     private long startTimeMs = -1L;
@@ -106,6 +137,13 @@ public class MultiHeartPopFlashFilter extends GlFilter {
     private float flashPeakFactor = 0.80f;
     private float maxDisplayWidthRatio = 0.22f;
     private float maxDisplayHeightRatio = 0.22f;
+    private float glowColorR = 0.62f;
+    private float glowColorG = 0.62f;
+    private float glowColorB = 0.62f;
+    private float glowStrength = 1.30f;
+    private float glowRadius = 6.0f;
+    private float glowSoftness = 0.82f;
+    private float glowOpacity = 0.55f;
 
     private final float[] centersX = new float[MAX_HEARTS];
     private final float[] centersY = new float[MAX_HEARTS];
@@ -134,6 +172,12 @@ public class MultiHeartPopFlashFilter extends GlFilter {
         heartOriginHandle = GLES20.glGetUniformLocation(mProgramHandle, "uHeartOrigin[0]");
         heartSizeHandle = GLES20.glGetUniformLocation(mProgramHandle, "uHeartSize[0]");
         heartAlphaHandle = GLES20.glGetUniformLocation(mProgramHandle, "uHeartAlpha[0]");
+        heartGlowColorHandle = GLES20.glGetUniformLocation(mProgramHandle, "uHeartGlowColor");
+        heartGlowStrengthHandle = GLES20.glGetUniformLocation(mProgramHandle, "uHeartGlowStrength");
+        heartGlowRadiusHandle = GLES20.glGetUniformLocation(mProgramHandle, "uHeartGlowRadius");
+        heartGlowSoftnessHandle = GLES20.glGetUniformLocation(mProgramHandle, "uHeartGlowSoftness");
+        heartGlowOpacityHandle = GLES20.glGetUniformLocation(mProgramHandle, "uHeartGlowOpacity");
+        viewportSizeHandle = GLES20.glGetUniformLocation(mProgramHandle, "uViewportSize");
         uploadHeartTextureIfNeed();
         regenerateLayout();
     }
@@ -260,6 +304,12 @@ public class MultiHeartPopFlashFilter extends GlFilter {
         GLES20.glUniform2fv(heartOriginHandle, MAX_HEARTS, FloatBuffer.wrap(origins));
         GLES20.glUniform2fv(heartSizeHandle, MAX_HEARTS, FloatBuffer.wrap(sizes));
         GLES20.glUniform1fv(heartAlphaHandle, MAX_HEARTS, FloatBuffer.wrap(alphas));
+        GLES20.glUniform3f(heartGlowColorHandle, clamp(glowColorR, 0f, 1f), clamp(glowColorG, 0f, 1f), clamp(glowColorB, 0f, 1f));
+        GLES20.glUniform1f(heartGlowStrengthHandle, clamp(glowStrength, 0f, 2f));
+        GLES20.glUniform1f(heartGlowRadiusHandle, clamp(glowRadius, 0f, 12f));
+        GLES20.glUniform1f(heartGlowSoftnessHandle, clamp(glowSoftness, 0.01f, 1f));
+        GLES20.glUniform1f(heartGlowOpacityHandle, clamp(glowOpacity, 0f, 1f));
+        GLES20.glUniform2f(viewportSizeHandle, Math.max(1f, mWidth), Math.max(1f, mHeight));
     }
 
     @Override
@@ -498,6 +548,33 @@ public class MultiHeartPopFlashFilter extends GlFilter {
     public MultiHeartPopFlashFilter setMaxDisplayRatio(float widthRatio, float heightRatio) {
         this.maxDisplayWidthRatio = Math.max(0.01f, widthRatio);
         this.maxDisplayHeightRatio = Math.max(0.01f, heightRatio);
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setGlowColor(float r, float g, float b) {
+        this.glowColorR = clamp(r, 0f, 1f);
+        this.glowColorG = clamp(g, 0f, 1f);
+        this.glowColorB = clamp(b, 0f, 1f);
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setGlowStrength(float glowStrength) {
+        this.glowStrength = clamp(glowStrength, 0f, 2f);
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setGlowRadius(float glowRadius) {
+        this.glowRadius = clamp(glowRadius, 0f, 12f);
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setGlowSoftness(float glowSoftness) {
+        this.glowSoftness = clamp(glowSoftness, 0.01f, 1f);
+        return this;
+    }
+
+    public MultiHeartPopFlashFilter setGlowOpacity(float glowOpacity) {
+        this.glowOpacity = clamp(glowOpacity, 0f, 1f);
         return this;
     }
 
