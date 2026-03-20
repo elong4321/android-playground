@@ -15,6 +15,19 @@ import java.util.Map;
  * fast lateral hit, overscan scale, horizontal stretch, coarse sample, thick soft blur.
  */
 public class GlMosaicShiftCascadeFilter5 extends GlFilter {
+    public interface OnShakeEventStartListener {
+        /**
+         * Called when a shake event starts in current timeline/cycle.
+         *
+         * @param eventIndex index in internal shakeEvents list
+          * @param cycleIndex 0-based cycle index; always 0 when loop is disabled
+         * @param triggerIndexInCycle 0-based trigger count in current cycle, resets each cycle
+         * @param startMs event start (local timeline ms)
+         * @param endMs event end (local timeline ms)
+         * @param mode shake mode (SHAKE_MODE_PULSE / SHAKE_MODE_OSCILLATE)
+         */
+        void onShakeEventStart(int eventIndex, int cycleIndex, int triggerIndexInCycle, float startMs, float endMs, int mode);
+    }
 
     public static final int EASE_LINEAR = 0;
     public static final int EASE_SMOOTH = 1;
@@ -236,7 +249,11 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
     private final List<MosaicKeyframe> mosaicKeyframes = new ArrayList<>();
     private final List<ZoomEvent> zoomEvents = new ArrayList<>();
     private final List<ShakeEvent> shakeEvents = new ArrayList<>();
+    private final List<Integer> shakeCallbackLastCycle = new ArrayList<>();
     private final List<BlackFadeEvent> blackFadeEvents = new ArrayList<>();
+    private OnShakeEventStartListener onShakeEventStartListener;
+    private int callbackCycleIndex = Integer.MIN_VALUE;
+    private int callbackCountInCycle = 0;
 
     public GlMosaicShiftCascadeFilter5() {
         super(VERTEX_SHADER, FRAGMENT_SHADER);
@@ -273,6 +290,7 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
         }
         float tMs = Math.max(0f, nowMs - firstPresentationMs);
         float loopedMs = resolveLoopedTimeMs(tMs);
+        dispatchShakeStartCallbacks(tMs, loopedMs);
 
         float zoomScale = resolveZoomScale(loopedMs);
         float shiftX = resolveShakeX(loopedMs);
@@ -342,12 +360,14 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
     @Override
     public void setup() {
         firstPresentationMs = -1f;
+        resetShakeEventCallbackStates();
         super.setup();
     }
 
     @Override
     public void release() {
         firstPresentationMs = -1f;
+        resetShakeEventCallbackStates();
         super.release();
     }
 
@@ -385,6 +405,7 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
 
     public GlMosaicShiftCascadeFilter5 clearShakeEvents() {
         shakeEvents.clear();
+        shakeCallbackLastCycle.clear();
         return this;
     }
 
@@ -400,6 +421,12 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
         float s = Math.max(0f, startMs);
         float e = Math.max(s + 1f, endMs);
         shakeEvents.add(new ShakeEvent(s, e, ampX, ampY, mode, Math.max(1, cycles)));
+        shakeCallbackLastCycle.add(Integer.MIN_VALUE);
+        return this;
+    }
+
+    public GlMosaicShiftCascadeFilter5 setOnShakeEventStartListener(OnShakeEventStartListener listener) {
+        this.onShakeEventStartListener = listener;
         return this;
     }
 
@@ -718,6 +745,59 @@ public class GlMosaicShiftCascadeFilter5 extends GlFilter {
         }
         float m = tMs % cycle;
         return m < 0f ? (m + cycle) : m;
+    }
+
+    private void resetShakeEventCallbackStates() {
+        for (int i = 0; i < shakeCallbackLastCycle.size(); i++) {
+            shakeCallbackLastCycle.set(i, Integer.MIN_VALUE);
+        }
+        callbackCycleIndex = Integer.MIN_VALUE;
+        callbackCountInCycle = 0;
+    }
+
+    private void dispatchShakeStartCallbacks(float absoluteMs, float localMs) {
+        if (onShakeEventStartListener == null || shakeEvents.isEmpty()) {
+            return;
+        }
+        float cycleDuration = loopDurationMs > 0f ? loopDurationMs : computeAutoLoopDurationMs();
+        int cycleIndex = 0;
+        if (loopEnabled && cycleDuration > 1f) {
+            cycleIndex = Math.max(0, (int) Math.floor(Math.max(0f, absoluteMs) / cycleDuration));
+        }
+        if (callbackCycleIndex != cycleIndex) {
+            callbackCycleIndex = cycleIndex;
+            callbackCountInCycle = 0;
+        }
+        for (int i = 0; i < shakeEvents.size(); i++) {
+            ShakeEvent event = shakeEvents.get(i);
+            int lastCycle = i < shakeCallbackLastCycle.size() ? shakeCallbackLastCycle.get(i) : Integer.MIN_VALUE;
+            if (localMs < event.startMs || localMs >= event.endMs) {
+                continue;
+            }
+            if (!loopEnabled) {
+                if (lastCycle == 0) {
+                    continue;
+                }
+                if (i < shakeCallbackLastCycle.size()) {
+                    shakeCallbackLastCycle.set(i, 0);
+                }
+            } else {
+                if (lastCycle == cycleIndex) {
+                    continue;
+                }
+                if (i < shakeCallbackLastCycle.size()) {
+                    shakeCallbackLastCycle.set(i, cycleIndex);
+                }
+            }
+            int triggerIndex = callbackCountInCycle++;
+            try {
+                onShakeEventStartListener.onShakeEventStart(
+                        i, cycleIndex, triggerIndex, event.startMs, event.endMs, event.mode
+                );
+            } catch (Throwable ignore) {
+                // Listener exception must not break effect rendering.
+            }
+        }
     }
 
     private float computeAutoLoopDurationMs() {
