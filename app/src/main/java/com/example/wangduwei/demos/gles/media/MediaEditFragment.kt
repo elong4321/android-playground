@@ -18,6 +18,7 @@ import com.example.lib_gles.video_filter.core.filter.GlFilterGroup
 import com.example.lib_gles.video_filter.core.filter.GlFilterList
 import com.example.lib_gles.video_filter.core.filter.GlFilterPeriod
 import com.example.lib_gles.video_filter.core.filter.TimeScaleFilter
+import com.example.lib_gles.video_filter.filter_impl.BlurFilter
 import com.example.lib_gles.video_filter.filter_impl.GlDualSideMarqueeFilter
 import com.example.lib_gles.video_filter.filter_impl.GlDynamicMosaicFilter
 import com.example.lib_gles.video_filter.filter_impl.GlEdgePingPongFilter
@@ -370,6 +371,12 @@ class MediaEditFragment: BaseSupportFragment() {
 
         val scaleTarget = 1.5f
 
+        val blurTimes = 4   // 经过几次后消除blur效果
+        val blurRadiusStart = 96f
+        val blurFilter = BlurFilter()
+            .setBlurRadiusPx(blurRadiusStart)
+            .setMix(1.0f)
+
 
         val shiftMosaicFilter = GlMosaicShiftCascadeFilter5()
             .setMosaicMaxBlockSize(10f)
@@ -385,12 +392,12 @@ class MediaEditFragment: BaseSupportFragment() {
             .setLoopEnabled(true)
             .setLoopDurationMs(loopDuration)
             .clearMosaicKeyframes()
-            .addMosaicLevelKeyframe(0f, 1.0f)
-            .addMosaicLevelKeyframe(shakeEnd1, 0.7f)
-            .addMosaicLevelKeyframe(shakeEnd2, 0.5f)
-            .addMosaicLevelKeyframe(shakeEnd3, 0.4f)
-            .addMosaicLevelKeyframe(shakeEnd4, 0.20f)
-            .addMosaicLevelKeyframe(shakeEnd4 + 1000, 0f)
+            .addMosaicLevelKeyframe(0f, 0f)
+//            .addMosaicLevelKeyframe(shakeEnd1, 0.7f)
+//            .addMosaicLevelKeyframe(shakeEnd2, 0.5f)
+//            .addMosaicLevelKeyframe(shakeEnd3, 0.4f)
+//            .addMosaicLevelKeyframe(shakeEnd4, 0.20f)
+//            .addMosaicLevelKeyframe(shakeEnd4 + 1000, 0f)
             .clearZoomEvents()
             .addZoomEvent(shakeEnd4, shakeEnd4 + 1000f, 1.0f, scaleTarget, GlMosaicShiftCascadeFilter3.EASE_SMOOTH)
             .addZoomEvent(shakeEnd4 + 1000f, Float.MAX_VALUE, scaleTarget, scaleTarget, GlMosaicShiftCascadeFilter3.EASE_LINEAR)
@@ -404,8 +411,14 @@ class MediaEditFragment: BaseSupportFragment() {
             .addPulseShakeEvent(shakeStep7, shakeEnd7, shakeStrength, 0f)
 //            .addPulseShakeEvent(shakeVertically1, shakeEndVertically1,  0f, shakeStrength)
 //            .addPulseShakeEvent(shakeVertically2, shakeEndVertically2,  0f, shakeStrength)
+            .setOnShakeEventStartListener { eventIndex, cycleIndex, triggerIndexInCycle, f, f1, i3 ->
+                val progress = triggerIndexInCycle + 1
+                if (progress <= blurTimes) {
+                    blurFilter.setBlurRadiusPx(blurRadiusStart * (1 - progress / blurTimes))
+                }
+            }
             .clearBlackFadeEvents()
-            .addBlackFadeEvent(loopDuration - 1000, loopDuration, 0f, 1f, GlMosaicShiftCascadeFilter5.EASE_SMOOTH);
+            .addBlackFadeEvent(loopDuration - 1000, loopDuration, 0f, 1f, GlMosaicShiftCascadeFilter5.EASE_SMOOTH)
 
         val timeScaleTarget = 0.5
 
@@ -415,6 +428,7 @@ class MediaEditFragment: BaseSupportFragment() {
             .setLoopDurationMs(loopDuration.toLong())
 
         val filterGroup = GlFilterGroup(
+            GlFilterPeriod(0, Long.MAX_VALUE, blurFilter),
             GlFilterPeriod(0, Long.MAX_VALUE, shiftMosaicFilter),
             GlFilterPeriod(0, Long.MAX_VALUE, loopTimeScaleFilter),
         )
